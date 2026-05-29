@@ -65,6 +65,7 @@ const lanes = [
 const state = {
   token: localStorage.getItem(STORAGE_KEY) || sessionStorage.getItem(SESSION_KEY) || "",
   remember: Boolean(localStorage.getItem(STORAGE_KEY)),
+  demo: false,
   user: null,
   notifications: [],
   enriched: new Map(),
@@ -209,6 +210,11 @@ async function github(pathOrUrl, options = {}) {
 }
 
 async function fetchNotifications() {
+  if (state.demo) {
+    loadDemo();
+    return;
+  }
+
   state.loading = true;
   state.error = "";
   render();
@@ -545,7 +551,7 @@ function renderAuth() {
       el("div", { class: "callout" }, [
         icon("lock"),
         el("span", {
-          html: "<strong>Token stays in this browser.</strong> Classic personal access tokens work for notifications; fine-grained tokens are not supported by GitHub's notifications endpoint."
+          html: "<strong>Use a classic token.</strong> Minimum scope is <code>notifications</code>. Add <code>repo</code> if private repositories should show full issue, PR, and comment context."
         })
       ]),
       el("div", { class: "token-field" }, [
@@ -557,6 +563,13 @@ function renderAuth() {
         el("span", { text: "Keep token after closing this tab" })
       ]),
       el("div", { class: "auth-actions" }, [
+        button({
+          className: "text-button",
+          label: "Try demo data",
+          iconName: "zap",
+          text: "Demo",
+          onClick: loadDemo
+        }),
         button({
           className: "primary-button",
           label: "Connect",
@@ -910,6 +923,7 @@ async function connect() {
 
 function signOut() {
   state.token = "";
+  state.demo = false;
   state.user = null;
   state.notifications = [];
   state.enriched = new Map();
@@ -920,6 +934,11 @@ function signOut() {
 }
 
 async function markThread(id, mode) {
+  if (state.demo) {
+    removeLocalThread(id, mode === "read" ? "Marked read in demo." : "Marked done in demo.");
+    return;
+  }
+
   try {
     if (mode === "read") {
       await github(`/notifications/threads/${id}`, { method: "PATCH" });
@@ -939,6 +958,11 @@ async function markThread(id, mode) {
 }
 
 async function ignoreThread(id) {
+  if (state.demo) {
+    removeLocalThread(id, "Thread ignored in demo.");
+    return;
+  }
+
   try {
     await github(`/notifications/threads/${id}/subscription`, {
       method: "PUT",
@@ -963,6 +987,87 @@ function clearToast() {
     state.error = "";
     render();
   }, 3200);
+}
+
+function removeLocalThread(id, message) {
+  state.notifications = state.notifications.filter((item) => item.id !== id);
+  state.enriched.delete(id);
+  state.selectedId = state.notifications[0]?.id || null;
+  state.toast = message;
+  render();
+  clearToast();
+}
+
+function loadDemo() {
+  state.demo = true;
+  state.token = "demo";
+  state.user = {
+    login: "mgoin",
+    avatar_url: ""
+  };
+
+  const now = Date.now();
+  state.notifications = [
+    demoNotification("demo-1", "mention", "openai/pingboard", "Can you sanity check the prod alert copy?", "Issue", now - 8 * 60 * 1000),
+    demoNotification("demo-2", "review_requested", "openai/runtime", "Refactor notification threading", "PullRequest", now - 42 * 60 * 1000),
+    demoNotification("demo-3", "review_requested", "openai/codeowners-heavy", "Update CODEOWNERS routing for platform", "PullRequest", now - 2 * 60 * 60 * 1000),
+    demoNotification("demo-4", "subscribed", "openai/docs", "Release notes discussion", "Discussion", now - 3 * 60 * 60 * 1000),
+    demoNotification("demo-5", "ci_activity", "openai/service", "Deploy preview completed", "CheckSuite", now - 4 * 60 * 60 * 1000)
+  ];
+
+  state.enriched = new Map([
+    ["demo-1", demoEnriched(0, "direct", "Direct mention", "The newest comment names you directly.", ["@", "mention"], "@mgoin can you check whether this alert title is too noisy?", "nora")],
+    ["demo-2", {
+      ...demoEnriched(1, "review", "Personal review", "You are individually listed as a requested reviewer.", ["personal review", "review_requested"], "This is waiting on your review before merge.", "sam"),
+      pull: { requested_reviewers: [{ login: "mgoin" }], requested_teams: [] }
+    }],
+    ["demo-3", {
+      ...demoEnriched(2, "ambient", "Team review", "A team review request is active: Platform. This often means CODEOWNERS or broad team routing.", ["team review", "possible CODEOWNERS", "review_requested"], "CODEOWNERS requested the Platform team, but you are not individually requested.", "github-actions"),
+      pull: { requested_reviewers: [], requested_teams: [{ name: "Platform", slug: "platform" }] }
+    }],
+    ["demo-4", demoEnriched(3, "ambient", "Watching", "This is coming from repository watch settings or a broad subscription.", ["subscribed"], "A new comment landed on a watched discussion.", "ava")],
+    ["demo-5", demoEnriched(4, "system", "CI activity", "A workflow run that you triggered completed.", ["ci activity"], "Deploy preview completed successfully.", "github-actions")]
+  ]);
+  state.selectedId = "demo-1";
+  state.query = "";
+  state.filter = "all";
+  state.error = "";
+  state.toast = "";
+  render();
+}
+
+function demoNotification(id, reason, repo, title, type, updatedAt) {
+  return {
+    id,
+    unread: id !== "demo-4",
+    reason,
+    updated_at: new Date(updatedAt).toISOString(),
+    repository: {
+      full_name: repo,
+      html_url: "https://github.com/" + repo,
+      owner: { login: repo.split("/")[0] }
+    },
+    subject: {
+      title,
+      type,
+      url: "https://api.github.com/repos/" + repo + "/issues/1"
+    }
+  };
+}
+
+function demoEnriched(index, lane, reasonLabel, context, pills, snippet, actor) {
+  const notification = state.notifications[index];
+  return {
+    notification,
+    lane,
+    reasonLabel,
+    context,
+    pills,
+    title: notification.subject.title,
+    snippet,
+    actor: { login: actor, avatar_url: "" },
+    htmlUrl: notification.repository.html_url
+  };
 }
 
 async function boot() {

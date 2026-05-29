@@ -23,6 +23,16 @@ The token is sent directly from your browser to `api.github.com`. If you do not 
 
 Pingboard sends `X-GitHub-Api-Version: 2022-11-28`, which is the version shown in GitHub's current notifications REST docs.
 
+## Codex-Side Report
+
+If the browser app is not the right fit, you can run the same notification classifier from Codex or a terminal:
+
+```bash
+GITHUB_TOKEN=ghp_... node tools/codex-notifications.mjs
+```
+
+Use `--all` to include read notifications and `--mine` to use GitHub's participating filter.
+
 ## Run Locally
 
 Open `index.html` in a browser, or serve the folder with any static file server:
