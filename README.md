@@ -1,53 +1,77 @@
 # Pingboard
 
-Pingboard is a static GitHub Pages dashboard for GitHub notifications. It reshapes the inbox into Slack-like activity lanes so direct pings are visually separated from reviewer churn, watch traffic, CI, and security notifications.
+Pingboard is a static, keyboard-first triage console for GitHub notifications, built for maintainers who are oversubscribed. It runs entirely in your browser against the GitHub REST API — no server, no build step, no dependencies.
 
-## What It Does
+It does three things hard:
 
-- Fetches GitHub notifications in the browser with your own token.
-- Classifies notifications by GitHub's `reason` field.
-- Highlights direct mentions, team mentions, assignments, authored threads, personal review requests, team review requests, CI, security alerts, and watch noise.
-- Enriches each notification with subject details, latest visible comment text, actor avatars, and pull request reviewer shape when GitHub exposes it.
-- Lets you open, mark read, mark done, or ignore a notification thread.
+1. **Sweep fast.** Gmail-style keyboard triage (`j`/`k`/`e`/`m`/`t`) with auto-advance, bulk select, "Done all" for a whole filtered view, and a 5-second undo buffer before anything actually hits GitHub.
+2. **Track what matters.** Pin priority PRs/issues to a watchlist. Items with new activity float up; merged/closed work files itself into a **Shipped** section that you clear when acknowledged.
+3. **Kill noise.** Mute whole repositories, hide bot traffic, isolate "stale" notifications whose PR/issue is already merged or closed, and slice by repo facets or lanes (Direct / Review / Ambient / System).
 
-## GitHub Token
+## Keyboard shortcuts
 
-GitHub's notifications REST endpoint currently requires a classic personal access token. Fine-grained personal access tokens and GitHub App tokens are not supported for the notifications endpoint.
+Press `?` in the app for this list.
 
-Use the least access that works for your account:
+| Key | Action |
+| --- | --- |
+| `j` / `k` | move cursor down / up |
+| `o` / `Enter` | open on GitHub (marks read) |
+| `e` | mark done · in Tracked: mark seen / clear shipped |
+| `r` | mark read |
+| `m` | mute thread (unsubscribe + done) |
+| `shift+m` | mute repository |
+| `t` | track / untrack the PR or issue |
+| `p` | priority-track · toggle priority flag |
+| `x` / `shift+x` | select thread / select everything in view |
+| `u` | undo pending actions |
+| `s` | toggle stale filter (merged/closed threads) |
+| `i` | cycle type filter: all · PRs · issues |
+| `1`–`5` | lanes: all · direct · review · ambient · system |
+| `6` | tracked view |
+| `/` | focus search |
+| `shift+r` | refresh now |
+| `Esc` | clear selection / search / filters |
 
-- Public-only notifications: `notifications`
-- Private repository notifications: `notifications` plus repository access needed for those private threads
+Mark done / read / mute actions are optimistic: they leave the screen immediately, wait 5 seconds, then commit to GitHub. `u` (or the Undo toast) takes them back. Closing the tab flushes pending actions immediately.
 
-The token is sent directly from your browser to `api.github.com`. If you do not check "Keep token after closing this tab", Pingboard uses `sessionStorage`; otherwise it uses `localStorage`.
+## GitHub token
 
-Pingboard sends `X-GitHub-Api-Version: 2022-11-28`, which is the version shown in GitHub's current notifications REST docs.
+GitHub's notifications REST endpoint requires a **classic** personal access token (fine-grained tokens are not supported for it).
 
-## Run Locally
+- Public-only notifications: `notifications` scope
+- Private repository notifications and context: `notifications` + `repo`
 
-Open `index.html` in a browser, or serve the folder with any static file server:
+The token is sent only from your browser to `api.github.com`. With "Keep token after closing this tab" unchecked it lives in `sessionStorage`; checked, in `localStorage`. Everything else Pingboard remembers (tracked threads, muted repos, preferences, the enrichment cache) is stored in `localStorage`, namespaced per GitHub login — so the deployed site works for anyone with their own token.
+
+## Speed & rate limits
+
+- Each notification is enriched (subject, latest comment, PR state) with a small worker pool, then cached in `localStorage` keyed by the thread's `updated_at` — refreshes and reloads only re-fetch what changed.
+- Background polling honors GitHub's `X-Poll-Interval` and uses `If-Modified-Since`, so an idle tab consumes almost no rate limit (304s are free).
+- Remaining API quota is always visible in the top bar.
+
+## Run locally
+
+Open `index.html` directly in a browser, or serve the folder:
 
 ```bash
-python -m http.server 8080
+python3 -m http.server 8080
 ```
 
-Then visit `http://localhost:8080`.
+## Publish to GitHub Pages
 
-## Publish To GitHub Pages
+1. Push this folder to a repository.
+2. In settings, enable Pages with "GitHub Actions" as the source.
+3. The included workflow publishes the static site. The site is subpath-safe (`https://<user>.github.io/pingboard/`).
 
-1. Create an empty GitHub repository.
-2. Push this folder to it.
-3. In the repository settings, enable Pages with "GitHub Actions" as the source.
-4. The included workflow publishes the static site.
+## Classification notes
 
-The site is subpath-safe, so a repository named `pingboard` will work at:
+Pingboard lanes notifications by GitHub's thread-level `reason`, upgraded with thread context once enriched:
 
-```text
-https://<your-user>.github.io/pingboard/
-```
+- **Direct** — `mention`, `team_mention`, `assign`, `author`, or your @login appearing in the latest visible comment.
+- **Review** — `review_requested` where you are individually listed as a requested reviewer, plus deployment approvals.
+- **Ambient** — watch traffic, comment follow-ups, manual subscriptions, and team review requests (likely CODEOWNERS — GitHub doesn't label these explicitly).
+- **System** — CI activity, security alerts, invitations, state changes.
 
-## Classification Notes
+Bot detection covers `[bot]` accounts, common CI/dependency bots, and dependabot-style titles.
 
-GitHub notifications expose a thread-level `reason`, and that reason can change if a later event is more direct. Pingboard treats `mention`, `team_mention`, `assign`, and `author` as direct. It treats `review_requested` as personal when the pull request still lists you as an individual requested reviewer, and as ambient/team review when only teams are listed.
-
-CODEOWNERS review requests are not always explicitly labeled by GitHub's REST notification payload. Pingboard surfaces team review requests as "possible CODEOWNERS" when the PR has requested teams but not an individual request.
+Author standing comes from `author_association` on the thread itself (no extra API calls): owner/member/collaborator threads get a `core` pill, first-time contributors a `first-time` pill, with the full value shown in the detail pane.
