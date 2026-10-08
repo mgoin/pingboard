@@ -1,0 +1,29 @@
+{
+  "description": "A board as written by the first v3 release: two groups, a cross-repo pin, non-default preferences.",
+  "login": "pingboard-tester",
+  "localStorage": {
+    "pingboard.githubToken": "test-token",
+    "pingboard.v3.pingboard-tester.board": {
+      "groups": [
+        { "id": "g1", "name": "Tracking", "collapsed": false },
+        { "id": "gmuzocujl", "name": "Release blockers", "collapsed": false }
+      ],
+      "pins": [
+        { "key": "vllm-project/vllm#60447", "repo": "vllm-project/vllm", "number": 60447, "group": "g1", "addedAt": 1791470000000, "seen": "OPEN|abc|passed|0|APPROVED" },
+        { "key": "vllm-project/vllm#60456", "repo": "vllm-project/vllm", "number": 60456, "group": "gmuzocujl", "addedAt": 1791470001000 },
+        { "key": "mgoin/pingboard#1", "repo": "mgoin/pingboard", "number": 1, "group": "gmuzocujl", "addedAt": 1791470002000 }
+      ]
+    },
+    "pingboard.v3.pingboard-tester.prefs": { "interval": 120, "notify": false, "defaultRepo": "vllm-project/vllm", "boardWidth": 371 }
+  },
+  "expect": {
+    "groups": ["Tracking", "Release blockers"],
+    "collapsed": [],
+    "pins": [
+      "vllm-project/vllm#60447 in Tracking",
+      "vllm-project/vllm#60456 in Release blockers",
+      "mgoin/pingboard#1 in Release blockers"
+    ],
+    "prefs": { "interval": 120, "defaultRepo": "vllm-project/vllm", "boardWidth": 371 }
+  }
+}

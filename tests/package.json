@@ -1,0 +1,11 @@
+{
+  "name": "pingboard-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "state-compat": "node state-compat.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.49.1"
+  }
+}
