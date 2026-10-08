@@ -29,17 +29,15 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha }}
           path: base
 
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
 
       - name: Install Playwright
         working-directory: head/tests
         run: |
-          npm install --no-audit --no-fund
-          npx playwright install --with-deps chromium
+          bun install --frozen-lockfile
+          bunx playwright install --with-deps chromium
 
       - name: Check saved boards still load
         working-directory: head/tests
-        run: node state-compat.mjs --head .. --base ../../base
+        run: bun state-compat.mjs --head .. --base ../../base

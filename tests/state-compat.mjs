@@ -8,7 +8,7 @@
 
    The GitHub API is mocked, so no token or network is needed.
 
-   usage: node state-compat.mjs --head <dir> [--base <dir>] */
+   usage: bun state-compat.mjs --head <dir> [--base <dir>] */
 
 import { chromium } from "playwright";
 import { readFile, readdir } from "node:fs/promises";
@@ -121,7 +121,7 @@ function compare(label, result, expected) {
 
 const head = option("head");
 const base = option("base");
-if (!head) throw new Error("usage: node state-compat.mjs --head <dir> [--base <dir>]");
+if (!head) throw new Error("usage: bun state-compat.mjs --head <dir> [--base <dir>]");
 
 const browser = await chromium.launch();
 const fixtureDir = path.join(here, "fixtures");

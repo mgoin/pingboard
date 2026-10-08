@@ -72,5 +72,5 @@ The included workflow publishes the folder to GitHub Pages on every push to `mai
 Every pull request runs `tests/state-compat.mjs`: it loads boards saved by earlier versions (`tests/fixtures`) into the changed code, with the GitHub API mocked, and fails if any pins, groups or preferences would be lost. It also has the base version write its own state first and checks the change can take that over. To run it locally:
 
 ```bash
-cd tests && npm install && npx playwright install chromium && node state-compat.mjs --head ..
+cd tests && bun install && bunx playwright install chromium && bun state-compat.mjs --head ..
 ```
