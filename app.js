@@ -180,13 +180,104 @@ function loadUserState() {
     defaultRepo: /^[\w.-]+\/[\w.-]+$/.test(prefs.defaultRepo || "") ? prefs.defaultRepo : DEFAULT_REPO
   };
 
-  const board = store.get(scopedKey("board"), null);
-  if (board?.groups?.length) {
-    state.board = board;
-  } else {
-    state.board = { groups: [{ id: "g1", name: "Tracking", collapsed: false }], pins: [] };
-  }
+  state.board = cleanBoard(store.get(scopedKey("board"), null)) || { groups: [{ id: "g1", name: "Tracking", collapsed: false }], pins: [] };
   state.cursor = state.board.pins[0]?.key || null;
+}
+
+/* Normalise a board read from storage or a backup file; null if it is not one. */
+function cleanBoard(raw) {
+  if (!Array.isArray(raw?.groups) || !Array.isArray(raw.pins)) return null;
+  const groups = raw.groups
+    .filter((group) => group && typeof group.id === "string" && typeof group.name === "string" && group.name.trim())
+    .map((group) => ({ id: group.id, name: group.name.trim(), collapsed: Boolean(group.collapsed) }));
+  if (!groups.length) return null;
+  const seen = new Set();
+  const pins = [];
+  for (const pin of raw.pins) {
+    if (!pin || !/^[\w.-]+\/[\w.-]+$/.test(pin.repo || "") || !Number.isInteger(pin.number) || pin.number <= 0) continue;
+    const key = pinKey(pin.repo, pin.number);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    pins.push({
+      key,
+      repo: pin.repo,
+      number: pin.number,
+      group: groups.some((group) => group.id === pin.group) ? pin.group : groups[0].id,
+      addedAt: Number(pin.addedAt) || Date.now(),
+      ...(typeof pin.seen === "string" ? { seen: pin.seen } : {})
+    });
+  }
+  return { groups, pins };
+}
+
+/* Another tab saved the board: adopt it, so this tab never writes a stale copy back over it. */
+function syncFromStorage(event) {
+  if (!state.user || event.storageArea !== localStorage) return;
+  if (event.key === scopedKey("board")) {
+    let board = null;
+    try {
+      board = cleanBoard(JSON.parse(event.newValue));
+    } catch {
+      /* unreadable: keep what this tab has */
+    }
+    if (!board) return;
+    state.board = board;
+    for (const key of [...state.data.keys()]) {
+      if (!pinByKey(key)) {
+        state.data.delete(key);
+        state.status.delete(key);
+      }
+    }
+    tick();
+  }
+}
+
+function exportBoard() {
+  const payload = { pingboard: 1, login: state.user.login, exportedAt: new Date().toISOString(), board: state.board };
+  const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }));
+  el("a", { href: url, download: `pingboard-${state.user.login}.json` }).click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function importBoard(file) {
+  let board = null;
+  try {
+    const parsed = JSON.parse(await file.text());
+    board = cleanBoard(parsed.board || parsed);
+  } catch {
+    /* handled below */
+  }
+  if (!board) return toast("That file is not a Pingboard backup", "error");
+  const count = `${board.pins.length} pull request${board.pins.length === 1 ? "" : "s"}`;
+  openChoice({
+    title: `Import ${count}?`,
+    body: `From ${file.name}. Adding keeps what is on your board now; replacing discards it.`,
+    options: [
+      {
+        key: "Enter",
+        label: "Add to my board",
+        run: () => {
+          const groupIds = new Map(board.groups.map((group) => [group.id, ensureGroup(group.name).id]));
+          const added = board.pins.filter((pin) => addPin(pin.repo, pin.number, groupIds.get(pin.group))).length;
+          toast(`Added ${added} of ${count}`, "ok");
+          render();
+        }
+      },
+      {
+        key: "r",
+        label: "Replace my board",
+        danger: true,
+        run: () => {
+          state.board = board;
+          state.data.clear();
+          state.status.clear();
+          persistBoard();
+          toast(`Board replaced with ${count}`, "ok");
+          tick();
+        }
+      }
+    ]
+  });
 }
 
 function persistBoard() {
@@ -729,6 +820,8 @@ function addPin(repo, number, group = targetGroupId()) {
   if (pinByKey(key)) return false;
   const pin = { key, repo, number, group, addedAt: Date.now() };
   state.board.pins.push(pin);
+  // Ask the browser not to evict this site's storage under disk pressure.
+  navigator.storage?.persist?.().catch(() => {});
   const target = state.board.groups.find((item) => item.id === group);
   if (target) target.collapsed = false;
   persistBoard();
@@ -778,7 +871,7 @@ function clearClosed() {
 function ensureGroup(name) {
   const existing = state.board.groups.find((group) => group.name.toLowerCase() === name.toLowerCase());
   if (existing) return existing;
-  const group = { id: `g${Date.now().toString(36)}`, name, collapsed: false };
+  const group = { id: `g${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, name, collapsed: false };
   state.board.groups.push(group);
   persistBoard();
   return group;
@@ -2166,6 +2259,12 @@ function openSettings() {
   const repoInput = el("input", { type: "text", value: state.prefs.defaultRepo, spellcheck: "false", onkeydown: (event) => event.key === "Enter" && save() });
   const interval = el("select", {}, [30, 60, 120, 300].map((seconds) => el("option", { value: seconds, selected: seconds === state.prefs.interval, text: seconds < 60 ? `${seconds} seconds` : `${seconds / 60} minute${seconds > 60 ? "s" : ""}` })));
   const notify = el("input", { type: "checkbox", checked: state.prefs.notify });
+  const file = el("input", {
+    type: "file",
+    accept: "application/json,.json",
+    hidden: true,
+    onchange: () => file.files[0] && importBoard(file.files[0])
+  });
   const save = async () => {
     const repo = repoInput.value.trim();
     if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) return toast("Default repository must look like owner/name", "error");
@@ -2185,6 +2284,15 @@ function openSettings() {
     el("p", { class: "muted small", text: "Used for bare PR numbers and for the Add PRs lists." }),
     el("label", { class: "field" }, ["Refresh open PRs every", interval]),
     el("label", { class: "check-row" }, [notify, "Browser notification when CI finishes"]),
+    el("div", { class: "field" }, [
+      "Board backup",
+      el("div", { class: "choices" }, [
+        el("button", { class: "btn", onclick: exportBoard, text: "Export to file" }),
+        el("button", { class: "btn", onclick: () => file.click(), text: "Import from file…" }),
+        file
+      ])
+    ]),
+    el("p", { class: "muted small", text: `Your board is saved in this browser for ${location.host}. Export it to move it to another browser or address, or to keep a copy.` }),
     el("div", { class: "choices" }, [
       el("button", { class: "btn primary", onclick: save, text: "Save" }),
       el("button", { class: "btn", onclick: () => { closeModal(); clearClosed(); }, text: "Clear merged / closed" }),
@@ -2315,6 +2423,7 @@ document.addEventListener("selectionchange", () => {
   if (renderSkipped && !pointerHeld && !selectingText()) render();
 });
 window.addEventListener("resize", () => applyBoardWidth());
+window.addEventListener("storage", syncFromStorage);
 
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) tick();
