@@ -1,0 +1,30 @@
+{
+  "description": "A collapsed group, an empty group, and a different default repository.",
+  "login": "pingboard-tester",
+  "localStorage": {
+    "pingboard.githubToken": "test-token",
+    "pingboard.v3.pingboard-tester.board": {
+      "groups": [
+        { "id": "g1", "name": "Tracking", "collapsed": true },
+        { "id": "gempty", "name": "Watching", "collapsed": false },
+        { "id": "glast", "name": "Mine", "collapsed": false }
+      ],
+      "pins": [
+        { "key": "vllm-project/vllm#59826", "repo": "vllm-project/vllm", "number": 59826, "group": "g1", "addedAt": 1791470000000 },
+        { "key": "vllm-project/vllm#60196", "repo": "vllm-project/vllm", "number": 60196, "group": "g1", "addedAt": 1791470001000 },
+        { "key": "vllm-project/vllm#60633", "repo": "vllm-project/vllm", "number": 60633, "group": "glast", "addedAt": 1791470002000 }
+      ]
+    },
+    "pingboard.v3.pingboard-tester.prefs": { "interval": 30, "notify": false, "defaultRepo": "mgoin/pingboard", "boardWidth": 640 }
+  },
+  "expect": {
+    "groups": ["Tracking", "Watching", "Mine"],
+    "collapsed": ["Tracking"],
+    "pins": [
+      "vllm-project/vllm#59826 in Tracking",
+      "vllm-project/vllm#60196 in Tracking",
+      "vllm-project/vllm#60633 in Mine"
+    ],
+    "prefs": { "interval": 30, "defaultRepo": "mgoin/pingboard", "boardWidth": 640 }
+  }
+}

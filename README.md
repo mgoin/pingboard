@@ -66,3 +66,11 @@ python3 -m http.server 8080
 ```
 
 The included workflow publishes the folder to GitHub Pages on every push to `main`.
+
+## Tests
+
+```bash
+./tests/run
+```
+
+Runs the checks every pull request has to pass. It needs [Bun](https://bun.sh) and installs everything else itself.
