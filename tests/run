@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Runs every check in this folder against the working tree. CI runs this same script.
+# Set PINGBOARD_BASE to a checkout of the previous version to also check upgrading from it.
+set -euo pipefail
+cd "$(dirname "$0")"
+
+bun install --frozen-lockfile
+bunx playwright install ${CI:+--with-deps} chromium
+
+for check in *.mjs; do
+  bun "$check" --head .. ${PINGBOARD_BASE:+--base "$PINGBOARD_BASE"}
+done

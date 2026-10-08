@@ -67,10 +67,10 @@ python3 -m http.server 8080
 
 The included workflow publishes the folder to GitHub Pages on every push to `main`.
 
-## Saved boards and pull requests
-
-Every pull request runs `tests/state-compat.mjs`: it loads boards saved by earlier versions (`tests/fixtures`) into the changed code, with the GitHub API mocked, and fails if any pins, groups or preferences would be lost. It also has the base version write its own state first and checks the change can take that over. To run it locally:
+## Tests
 
 ```bash
-cd tests && bun install && bunx playwright install chromium && bun state-compat.mjs --head ..
+./tests/run
 ```
+
+Runs the checks every pull request has to pass. It needs [Bun](https://bun.sh) and installs everything else itself.
