@@ -148,7 +148,7 @@ const state = {
   authError: "",
 
   board: { groups: [], pins: [] },   // pins: [{key, repo, number, group, addedAt, seen}]
-  prefs: { interval: 60, notify: false, defaultRepo: DEFAULT_REPO, boardWidth: BOARD_WIDTH },
+  prefs: { interval: 60, notify: false, defaultRepo: DEFAULT_REPO, boardWidth: BOARD_WIDTH, following: [] },
 
   data: new Map(),        // pin key -> PR model
   status: new Map(),      // pin key -> {at, loading, error}
@@ -177,7 +177,8 @@ function loadUserState() {
     interval: [30, 60, 120, 300].includes(prefs.interval) ? prefs.interval : 60,
     notify: Boolean(prefs.notify),
     boardWidth: Number(prefs.boardWidth) || BOARD_WIDTH,
-    defaultRepo: /^[\w.-]+\/[\w.-]+$/.test(prefs.defaultRepo || "") ? prefs.defaultRepo : DEFAULT_REPO
+    defaultRepo: /^[\w.-]+\/[\w.-]+$/.test(prefs.defaultRepo || "") ? prefs.defaultRepo : DEFAULT_REPO,
+    following: parseLogins(Array.isArray(prefs.following) ? prefs.following.join(" ") : "")
   };
 
   state.board = cleanBoard(store.get(scopedKey("board"), null)) || { groups: [{ id: "g1", name: "Tracking", collapsed: false }], pins: [] };
@@ -278,6 +279,30 @@ async function importBoard(file) {
       }
     ]
   });
+}
+
+/* Authors the user follows: highlighted wherever they appear, and a list in Add PRs. */
+function parseLogins(text) {
+  const logins = [];
+  for (const token of text.split(/[\s,@]+/)) {
+    if (/^[A-Za-z0-9][A-Za-z0-9-]*$/.test(token) && !logins.some((login) => login.toLowerCase() === token.toLowerCase())) logins.push(token);
+  }
+  return logins;
+}
+
+function isFollowed(login) {
+  return state.prefs.following.some((item) => item.toLowerCase() === String(login).toLowerCase());
+}
+
+function toggleFollow(login) {
+  const following = state.prefs.following;
+  state.prefs.following = isFollowed(login) ? following.filter((item) => item.toLowerCase() !== login.toLowerCase()) : following.concat(login);
+  persistPrefs();
+  render();
+}
+
+function authorName(login) {
+  return el("span", { class: `author${isFollowed(login) ? " followed" : ""}`, title: isFollowed(login) ? "You follow this author" : null, text: login });
 }
 
 function persistBoard() {
@@ -1617,7 +1642,7 @@ function row(pin, index) {
       ]),
       el("div", { class: "row-meta" }, [
         el("a", { class: "num", href: pr.url, target: "_blank", rel: "noopener", title: "Open on GitHub", onclick: (event) => event.stopPropagation(), text: shortRef(pr.repo, pr.number) }),
-        el("span", { text: pr.author }),
+        authorName(pr.author),
         el("span", { title: new Date(pr.updatedAt).toLocaleString(), text: `updated ${ago(pr.updatedAt)} ago` }),
         review ? el("span", { class: pr.reviewDecision === "APPROVED" ? "t-good" : "t-bad", text: review }) : null,
         ...pr.labels.filter((label) => quick.includes(label.name)).map(labelChip),
@@ -1708,7 +1733,9 @@ function renderDetail(index) {
     el("div", { class: "detail-meta" }, [
       el("a", { href: pr.url, target: "_blank", rel: "noopener", text: `${pr.repo}#${pr.number}` }),
       stateBadge(pr),
-      el("span", { class: "muted", text: `${pr.author} · updated ${ago(pr.updatedAt)} ago` })
+      authorName(pr.author),
+      el("button", { class: "link-btn", onclick: () => toggleFollow(pr.author), text: isFollowed(pr.author) ? "Following ✓" : "Follow" }),
+      el("span", { class: "muted", text: `updated ${ago(pr.updatedAt)} ago` })
     ]),
     el("h2", { text: pr.title }),
     el("div", { class: "muted small", text: `+${pr.additions} −${pr.deletions} in ${pr.files} file${pr.files === 1 ? "" : "s"} · last commit ${ago(pr.headDate)} ago` })
@@ -2110,16 +2137,20 @@ function openAdd(groupId = targetGroupId()) {
     { id: "requested", label: "Review requested", q: "user-review-requested:@me" },
     { id: "reviewed", label: "Reviewed", q: "reviewed-by:@me" },
     { id: "involved", label: "Involved", q: "involves:@me" },
+    { id: "following", label: "Following", q: state.prefs.following.map((login) => `author:${login}`).join(" ") },
     ...(quick ? [{ id: "quick", label: quick, q: `label:${quick}` }] : []),
     { id: "recent", label: "All recent", q: "" }
   ];
   const group = state.board.groups.find((item) => item.id === groupId) || state.board.groups[0];
   const queryFor = (modal) => {
     const tab = tabs.find((item) => item.id === modal.tab);
-    return ["is:pr is:open", `repo:${repo}`, tab.q, modal.query.trim(), "sort:updated-desc"].filter(Boolean).join(" ");
+    // "@name" in the search box is shorthand for GitHub's author:name.
+    const text = modal.query.trim().replace(/(^|\s)@([A-Za-z0-9-]+)/g, "$1author:$2");
+    return ["is:pr is:open", `repo:${repo}`, tab.q, text, "sort:updated-desc"].filter(Boolean).join(" ");
   };
+  const nobodyFollowed = (modal) => modal.tab === "following" && !state.prefs.following.length;
   const search = async (modal) => {
-    if (parseRefs(modal.query)) return modal.update();
+    if (parseRefs(modal.query) || nobodyFollowed(modal)) return modal.update();
     const query = queryFor(modal);
     const cached = searchCache.get(query);
     if (cached && Date.now() - cached.at < 60000) return modal.update();
@@ -2139,7 +2170,7 @@ function openAdd(groupId = targetGroupId()) {
 
   search(openPicker({
     title: `Add pull requests → ${group.name}`,
-    placeholder: `Search ${repo}, or paste PR numbers / URLs`,
+    placeholder: `Search ${repo}, @author, or paste PR numbers / URLs`,
     hint: "Click a pull request to pin it; click again to unpin.",
     tabs,
     onQuery: searchSoon,
@@ -2157,6 +2188,10 @@ function openAdd(groupId = targetGroupId()) {
           ])
         }));
       }
+      if (nobodyFollowed(modal)) {
+        modal.emptyText = "You are not following anyone yet. Add usernames in Settings, or use Follow next to an author's name.";
+        return [];
+      }
       const result = searchCache.get(queryFor(modal));
       modal.emptyText = modal.error || (modal.loading || !result ? "Searching…" : "No open pull requests match");
       return (result?.nodes || []).map((node) => {
@@ -2171,7 +2206,7 @@ function openAdd(groupId = targetGroupId()) {
             el("span", { class: "num", text: `#${node.number}` }),
             el("span", { class: "title-text", text: node.title }),
             el("span", { class: "tags" }, node.labels.nodes.filter((label) => profileFor(ref.repo).quickLabels.includes(label.name)).map(labelChip)),
-            el("span", { class: "author", text: node.author?.login || "ghost" }),
+            authorName(node.author?.login || "ghost"),
             el("span", { class: "age", text: ago(node.updatedAt) }),
             el("span", { class: `pin-mark${pinned ? " on" : ""}`, text: pinned ? "✓ Pinned" : "Pin" })
           ])
@@ -2259,6 +2294,7 @@ function openSettings() {
   const repoInput = el("input", { type: "text", value: state.prefs.defaultRepo, spellcheck: "false", onkeydown: (event) => event.key === "Enter" && save() });
   const interval = el("select", {}, [30, 60, 120, 300].map((seconds) => el("option", { value: seconds, selected: seconds === state.prefs.interval, text: seconds < 60 ? `${seconds} seconds` : `${seconds / 60} minute${seconds > 60 ? "s" : ""}` })));
   const notify = el("input", { type: "checkbox", checked: state.prefs.notify });
+  const following = el("input", { type: "text", value: state.prefs.following.join(" "), placeholder: "usernames, separated by spaces", spellcheck: "false", onkeydown: (event) => event.key === "Enter" && save() });
   const file = el("input", {
     type: "file",
     accept: "application/json,.json",
@@ -2271,6 +2307,7 @@ function openSettings() {
     state.prefs.defaultRepo = repo;
     state.prefs.interval = Number(interval.value);
     state.prefs.notify = notify.checked;
+    state.prefs.following = parseLogins(following.value);
     if (notify.checked && "Notification" in window && Notification.permission !== "granted") {
       state.prefs.notify = (await Notification.requestPermission()) === "granted";
       if (!state.prefs.notify) toast("Browser notifications are blocked for this site", "error");
@@ -2284,6 +2321,8 @@ function openSettings() {
     el("p", { class: "muted small", text: "Used for bare PR numbers and for the Add PRs lists." }),
     el("label", { class: "field" }, ["Refresh open PRs every", interval]),
     el("label", { class: "check-row" }, [notify, "Browser notification when CI finishes"]),
+    el("label", { class: "field" }, ["Following", following]),
+    el("p", { class: "muted small", text: "Their names are highlighted, and Add PRs gets a Following list." }),
     el("div", { class: "field" }, [
       "Board backup",
       el("div", { class: "choices" }, [

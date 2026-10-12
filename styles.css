@@ -19,6 +19,7 @@
   --todo: #6639ba;
   --running: #0b6fb3;
   --merged: #8250df;
+  --follow: #b0307c;
   --focus: #1d4ed8;
   --shadow: 0 16px 36px rgba(20, 27, 22, 0.14);
   --radius: 6px;
@@ -46,6 +47,7 @@
     --todo: #b392f0;
     --running: #58a6ff;
     --merged: #a371f7;
+    --follow: #f28dc4;
     --focus: #93c5fd;
     --shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
   }
@@ -423,6 +425,7 @@ a.num:hover { text-decoration: underline; color: var(--text); }
 .result { display: flex; align-items: center; gap: 10px; white-space: nowrap; }
 .result .title-text { flex: 1; }
 .result .author, .result .age { font-size: 12.5px; color: var(--quiet); }
+.author.followed, .result .author.followed { color: var(--follow); font-weight: 600; }
 .result.pinned .title-text { color: var(--muted); }
 .pin-mark { min-width: 76px; text-align: center; font-size: 12.5px; font-weight: 500; padding: 2px 8px; border: 1px solid var(--line-strong); border-radius: var(--radius); }
 .pin-mark.on { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }

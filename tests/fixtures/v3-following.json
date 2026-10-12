@@ -1,0 +1,53 @@
+{
+  "description": "Preferences that include followed authors.",
+  "login": "pingboard-tester",
+  "localStorage": {
+    "pingboard.githubToken": "test-token",
+    "pingboard.v3.pingboard-tester.board": {
+      "groups": [
+        {
+          "id": "g1",
+          "name": "Tracking",
+          "collapsed": false
+        }
+      ],
+      "pins": [
+        {
+          "key": "vllm-project/vllm#60447",
+          "repo": "vllm-project/vllm",
+          "number": 60447,
+          "group": "g1",
+          "addedAt": 1791470000000
+        }
+      ]
+    },
+    "pingboard.v3.pingboard-tester.prefs": {
+      "interval": 60,
+      "notify": false,
+      "defaultRepo": "vllm-project/vllm",
+      "boardWidth": 520,
+      "following": [
+        "alice",
+        "bob-smith"
+      ]
+    }
+  },
+  "expect": {
+    "groups": [
+      "Tracking"
+    ],
+    "collapsed": [],
+    "pins": [
+      "vllm-project/vllm#60447 in Tracking"
+    ],
+    "prefs": {
+      "interval": 60,
+      "defaultRepo": "vllm-project/vllm",
+      "boardWidth": 520,
+      "following": [
+        "alice",
+        "bob-smith"
+      ]
+    }
+  }
+}
