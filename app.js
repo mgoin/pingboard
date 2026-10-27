@@ -47,9 +47,45 @@ const REPO_PROFILES = {
   }
 };
 const GENERIC_PROFILE = { ciPrefix: null, mainPipeline: null, ciCommands: null, quickLabels: [], mergeMethod: "squash" };
+const PROFILE_COMMAND_KEYS = ["run", "retry", "cancel", "stale"];
+const MERGE_METHODS = new Set(["merge", "rebase", "squash"]);
+
+function normalizeCommands(value, fallback) {
+  if (value === null) return null;
+  const source = value && typeof value === "object" ? value : fallback;
+  if (!source) return null;
+  const commands = Object.fromEntries(PROFILE_COMMAND_KEYS.map((key) => [key, typeof source[key] === "string" ? source[key].trim() : ""]));
+  return PROFILE_COMMAND_KEYS.some((key) => commands[key]) ? commands : null;
+}
+
+function normalizeProfile(raw, fallback = GENERIC_PROFILE) {
+  const value = raw && typeof raw === "object" ? raw : {};
+  const labels = Array.isArray(value.quickLabels)
+    ? [...new Set(value.quickLabels.filter((label) => typeof label === "string").map((label) => label.trim()).filter(Boolean))]
+    : [...fallback.quickLabels];
+  return {
+    ciPrefix: typeof value.ciPrefix === "string" ? value.ciPrefix.trim() || null : fallback.ciPrefix,
+    mainPipeline: typeof value.mainPipeline === "string" ? value.mainPipeline.trim() || null : fallback.mainPipeline,
+    ciCommands: normalizeCommands(value.ciCommands, fallback.ciCommands),
+    quickLabels: labels,
+    mergeMethod: MERGE_METHODS.has(value.mergeMethod) ? value.mergeMethod : fallback.mergeMethod
+  };
+}
+
+function normalizeRepoProfiles(raw) {
+  if (!raw || typeof raw !== "object") return {};
+  const profiles = {};
+  for (const [repo, value] of Object.entries(raw)) {
+    if (/^[\w.-]+\/[\w.-]+$/.test(repo) && value && typeof value === "object") {
+      profiles[repo] = normalizeProfile(value, REPO_PROFILES[repo] || GENERIC_PROFILE);
+    }
+  }
+  return profiles;
+}
 
 function profileFor(repo) {
-  return REPO_PROFILES[repo] || GENERIC_PROFILE;
+  const base = REPO_PROFILES[repo] || GENERIC_PROFILE;
+  return normalizeProfile(state.prefs.repoProfiles?.[repo], base);
 }
 
 const store = {
@@ -148,7 +184,7 @@ const state = {
   authError: "",
 
   board: { groups: [], pins: [] },   // pins: [{key, repo, number, group, addedAt, seen}]
-  prefs: { interval: 60, notify: false, defaultRepo: DEFAULT_REPO, boardWidth: BOARD_WIDTH, following: [] },
+  prefs: { interval: 60, notify: false, defaultRepo: DEFAULT_REPO, boardWidth: BOARD_WIDTH, following: [], repoProfiles: {} },
 
   data: new Map(),        // pin key -> PR model
   status: new Map(),      // pin key -> {at, loading, error}
@@ -171,15 +207,20 @@ function scopedKey(suffix) {
   return `pingboard.v3.${state.user?.login || "anonymous"}.${suffix}`;
 }
 
-function loadUserState() {
-  const prefs = store.get(scopedKey("prefs"), {});
-  state.prefs = {
+function normalizePrefs(raw) {
+  const prefs = raw && typeof raw === "object" ? raw : {};
+  return {
     interval: [30, 60, 120, 300].includes(prefs.interval) ? prefs.interval : 60,
     notify: Boolean(prefs.notify),
     boardWidth: Number(prefs.boardWidth) || BOARD_WIDTH,
     defaultRepo: /^[\w.-]+\/[\w.-]+$/.test(prefs.defaultRepo || "") ? prefs.defaultRepo : DEFAULT_REPO,
-    following: parseLogins(Array.isArray(prefs.following) ? prefs.following.join(" ") : "")
+    following: parseLogins(Array.isArray(prefs.following) ? prefs.following.join(" ") : ""),
+    repoProfiles: normalizeRepoProfiles(prefs.repoProfiles)
   };
+}
+
+function loadUserState() {
+  state.prefs = normalizePrefs(store.get(scopedKey("prefs"), {}));
 
   state.board = cleanBoard(store.get(scopedKey("board"), null)) || { groups: [{ id: "g1", name: "Tracking", collapsed: false }], pins: [] };
   state.cursor = state.board.pins[0]?.key || null;
@@ -234,7 +275,14 @@ function syncFromStorage(event) {
 }
 
 function exportBoard() {
-  const payload = { pingboard: 1, login: state.user.login, exportedAt: new Date().toISOString(), board: state.board };
+  const payload = {
+    pingboard: 1,
+    login: state.user.login,
+    exportedAt: new Date().toISOString(),
+    board: state.board,
+    // Deliberately copy only non-secret preferences; the GitHub token is never exported.
+    prefs: normalizePrefs(state.prefs)
+  };
   const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }));
   el("a", { href: url, download: `pingboard-${state.user.login}.json` }).click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
@@ -242,17 +290,27 @@ function exportBoard() {
 
 async function importBoard(file) {
   let board = null;
+  let prefs = null;
   try {
     const parsed = JSON.parse(await file.text());
     board = cleanBoard(parsed.board || parsed);
+    if (parsed && typeof parsed === "object" && Object.prototype.hasOwnProperty.call(parsed, "prefs")) {
+      prefs = normalizePrefs(parsed.prefs);
+    }
   } catch {
     /* handled below */
   }
   if (!board) return toast("That file is not a Pingboard backup", "error");
   const count = `${board.pins.length} pull request${board.pins.length === 1 ? "" : "s"}`;
+  const applyPrefs = () => {
+    if (!prefs) return;
+    state.prefs = prefs;
+    persistPrefs();
+    applyBoardWidth();
+  };
   openChoice({
     title: `Import ${count}?`,
-    body: `From ${file.name}. Adding keeps what is on your board now; replacing discards it.`,
+    body: `From ${file.name}.${prefs ? " This backup includes non-secret preferences and repository profiles, but never your GitHub token." : ""} Adding keeps what is on your board now; replacing discards it.`,
     options: [
       {
         key: "Enter",
@@ -260,6 +318,7 @@ async function importBoard(file) {
         run: () => {
           const groupIds = new Map(board.groups.map((group) => [group.id, ensureGroup(group.name).id]));
           const added = board.pins.filter((pin) => addPin(pin.repo, pin.number, groupIds.get(pin.group))).length;
+          applyPrefs();
           toast(`Added ${added} of ${count}`, "ok");
           render();
         }
@@ -273,6 +332,7 @@ async function importBoard(file) {
           state.data.clear();
           state.status.clear();
           persistBoard();
+          applyPrefs();
           toast(`Board replaced with ${count}`, "ok");
           tick();
         }
@@ -1116,7 +1176,8 @@ function closedNotice(pr) {
 function ciCommand(kind, pr = cursorPR()) {
   if (!pr || pr.state !== "OPEN") return closedNotice(pr);
   const commands = profileFor(pr.repo).ciCommands;
-  if (!commands) return toast(`No CI commands configured for ${pr.repo}`);
+  const command = commands?.[kind];
+  if (!command) return toast(`No ${kind} command configured for ${pr.repo}`);
   if (kind !== "run" || !pr.behind) return postComment(pr, commands[kind]);
   // The bot refuses to start CI on a branch that is behind its base.
   openChoice({
@@ -1124,7 +1185,7 @@ function ciCommand(kind, pr = cursorPR()) {
     body: `${commands.run} is refused on a branch that is behind its base.`,
     options: [
       pr.mergeable !== "CONFLICTING" && pr.canUpdate && { key: "Enter", label: `Update branch, then ${commands.run}`, run: () => updateBranch(pr, commands.run) },
-      { key: "s", label: `Post ${commands.stale}`, run: () => postComment(pr, commands.stale) }
+      commands.stale && { key: "s", label: `Post ${commands.stale}`, run: () => postComment(pr, commands.stale) }
     ].filter(Boolean)
   });
 }
@@ -1229,7 +1290,8 @@ function mergeMenu(pr = cursorPR()) {
 
 function openBuild(pr = cursorPR()) {
   if (!pr) return;
-  const build = pr.ci.builds.find((item) => item.pipeline === "ci") || pr.ci.builds[0] || pr.ci.failed[0] || pr.ci.running[0];
+  const pipeline = profileFor(pr.repo).mainPipeline;
+  const build = (pipeline && pr.ci.builds.find((item) => item.pipeline === pipeline)) || pr.ci.builds[0] || pr.ci.failed[0] || pr.ci.running[0];
   if (build?.url) openUrl(build.url);
   else toast("No CI build on the head commit");
 }
@@ -1414,7 +1476,7 @@ function renderTop() {
   const sync = document.querySelector("#sync");
   sync.className = `sync${busy ? " busy" : ""}${throttled ? " warn" : ""}`;
   sync.textContent = parts.filter(Boolean).join(" · ");
-  document.querySelector("#me").textContent = state.user.login;
+  document.querySelector("#me").textContent = "Settings";
 }
 
 /* The one-line answer to "what is going on with this PR, and what comes next?" */
@@ -1428,7 +1490,7 @@ function verdict(pr, index) {
   const plural = (count) => (count === 1 ? "" : "s");
   const behindNote = behind ? ` The branch is ${behind} behind ${pr.base}.` : "";
   // Starting CI needs an up-to-date branch; offer the one-step version when we may push to it.
-  const runCi = commands && (!behind
+  const runCi = commands?.run && (!behind
     ? { label: "Run CI", run: () => postComment(pr, commands.run) }
     : pr.canUpdate
       ? { label: "Update branch & run CI", run: () => updateBranch(pr, commands.run) }
@@ -1467,7 +1529,7 @@ function verdict(pr, index) {
       tone: "warn",
       text: `${shared.length} failure${plural(shared.length)}, likely unrelated`,
       why: `Every failing job also fails on ${pr.base} or on other pinned PRs.`,
-      action: commands && { label: "Retry failed jobs", run: () => postComment(pr, commands.retry) }
+      action: commands?.retry && { label: "Retry failed jobs", run: () => postComment(pr, commands.retry) }
     };
   }
 
@@ -1757,9 +1819,9 @@ function renderDetail(index) {
         : ciLine({ ...pr, behind: 0 }),
       build ? el("div", { class: "muted small", text: build }) : null,
       el("div", { class: "btn-row" }, [
-        commands && btn("Run CI", () => ciCommand("run", pr), { title: `Comment ${commands.run}` }),
-        commands && ci.fail ? btn("Retry failed", () => ciCommand("retry", pr), { title: `Comment ${commands.retry}` }) : null,
-        commands && ci.state === "running" ? btn("Cancel", () => ciCommand("cancel", pr), { title: `Comment ${commands.cancel}` }) : null,
+        commands?.run && btn("Run CI", () => ciCommand("run", pr), { title: `Comment ${commands.run}` }),
+        commands?.retry && ci.fail ? btn("Retry failed", () => ciCommand("retry", pr), { title: `Comment ${commands.retry}` }) : null,
+        commands?.cancel && ci.state === "running" ? btn("Cancel", () => ciCommand("cancel", pr), { title: `Comment ${commands.cancel}` }) : null,
         ci.builds.length ? btn("Open build ↗", () => openBuild(pr)) : null
       ]),
       ci.other.failed.length ? jobList("Failing checks", "bad", ci.other.failed.map((check) => ({ check }))) : null,
@@ -2291,7 +2353,30 @@ function openGroupPicker(pin = cursorPin()) {
 }
 
 function openSettings() {
-  const repoInput = el("input", { type: "text", value: state.prefs.defaultRepo, spellcheck: "false", onkeydown: (event) => event.key === "Enter" && save() });
+  const repoInput = el("input", {
+    type: "text",
+    value: state.prefs.defaultRepo,
+    spellcheck: "false",
+    onkeydown: (event) => event.key === "Enter" && save()
+  });
+  const NEW_PROFILE = "__new_profile__";
+  const profileRepos = [...new Set([
+    ...Object.keys(REPO_PROFILES),
+    ...Object.keys(state.prefs.repoProfiles),
+    state.prefs.defaultRepo
+  ])].sort();
+  const profileSelect = el("select", { onchange: loadProfile }, [
+    ...profileRepos.map((repo) => el("option", { value: repo, selected: repo === state.prefs.defaultRepo, text: repo })),
+    el("option", { value: NEW_PROFILE, text: "New repository…" })
+  ]);
+  const deleteProfileButton = el("button", { class: "btn", type: "button", text: "Delete saved profile", onclick: deleteProfile });
+  const profileRepoInput = el("input", { class: "profile-repo-input", type: "text", spellcheck: "false", placeholder: "owner/repo", onchange: loadProfile });
+  const profileRepoField = el("label", { class: "field" }, ["Repository", profileRepoInput]);
+  const ciPrefix = el("input", { type: "text", spellcheck: "false", placeholder: "e.g. buildkite/" });
+  const mainPipeline = el("input", { type: "text", spellcheck: "false", placeholder: "e.g. ci" });
+  const commandInputs = Object.fromEntries(PROFILE_COMMAND_KEYS.map((key) => [key, el("input", { type: "text", spellcheck: "false" })]));
+  const quickLabels = el("input", { type: "text", spellcheck: "false", placeholder: "ready, verified" });
+  const mergeMethod = el("select", {}, ["merge", "rebase", "squash"].map((method) => el("option", { value: method, text: method })));
   const interval = el("select", {}, [30, 60, 120, 300].map((seconds) => el("option", { value: seconds, selected: seconds === state.prefs.interval, text: seconds < 60 ? `${seconds} seconds` : `${seconds / 60} minute${seconds > 60 ? "s" : ""}` })));
   const notify = el("input", { type: "checkbox", checked: state.prefs.notify });
   const following = el("input", { type: "text", value: state.prefs.following.join(" "), placeholder: "usernames, separated by spaces", spellcheck: "false", onkeydown: (event) => event.key === "Enter" && save() });
@@ -2301,13 +2386,69 @@ function openSettings() {
     hidden: true,
     onchange: () => file.files[0] && importBoard(file.files[0])
   });
+  function deleteProfile() {
+    const isNew = profileSelect.value === NEW_PROFILE;
+    const profileRepo = isNew ? profileRepoInput.value.trim() : profileSelect.value;
+    if (!/^[\w.-]+\/[\w.-]+$/.test(profileRepo) || !Object.prototype.hasOwnProperty.call(state.prefs.repoProfiles, profileRepo)) return;
+    openChoice({
+      title: `Delete saved profile for ${profileRepo}?`,
+      body: REPO_PROFILES[profileRepo]
+        ? "This will restore the built-in defaults for this repository."
+        : "This removes the repository's saved workflow settings from this browser.",
+      options: [{
+        key: "Enter",
+        label: "Delete profile",
+        danger: true,
+        run: () => {
+          const profiles = { ...state.prefs.repoProfiles };
+          delete profiles[profileRepo];
+          state.prefs.repoProfiles = profiles;
+          persistPrefs();
+          toast(REPO_PROFILES[profileRepo] ? `Restored built-in profile for ${profileRepo}` : `Deleted profile for ${profileRepo}`);
+        }
+      }]
+    });
+  }
+  function loadProfile() {
+    const isNew = profileSelect.value === NEW_PROFILE;
+    if (isNew) {
+      if (profileRepoInput.readOnly) profileRepoInput.value = "";
+      profileRepoInput.readOnly = false;
+    } else {
+      profileRepoInput.value = profileSelect.value;
+      profileRepoInput.readOnly = true;
+    }
+    const repo = isNew ? profileRepoInput.value.trim() : profileSelect.value;
+    const validRepo = /^[\w.-]+\/[\w.-]+$/.test(repo);
+    deleteProfileButton.disabled = !validRepo || !Object.prototype.hasOwnProperty.call(state.prefs.repoProfiles, repo);
+    const profile = validRepo ? profileFor(repo) : GENERIC_PROFILE;
+    ciPrefix.value = profile.ciPrefix || "";
+    mainPipeline.value = profile.mainPipeline || "";
+    for (const key of PROFILE_COMMAND_KEYS) commandInputs[key].value = profile.ciCommands?.[key] || "";
+    quickLabels.value = profile.quickLabels.join(", ");
+    mergeMethod.value = profile.mergeMethod;
+  }
   const save = async () => {
     const repo = repoInput.value.trim();
     if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) return toast("Default repository must look like owner/name", "error");
+    const profileRepo = profileSelect.value === NEW_PROFILE ? profileRepoInput.value.trim() : profileSelect.value;
+    if (!/^[\w.-]+\/[\w.-]+$/.test(profileRepo)) return toast("Workflow repository must look like owner/name", "error");
+    const commands = Object.fromEntries(PROFILE_COMMAND_KEYS.map((key) => [key, commandInputs[key].value.trim()]));
+    const hasCommands = PROFILE_COMMAND_KEYS.some((key) => commands[key]);
     state.prefs.defaultRepo = repo;
     state.prefs.interval = Number(interval.value);
     state.prefs.notify = notify.checked;
     state.prefs.following = parseLogins(following.value);
+    state.prefs.repoProfiles = {
+      ...state.prefs.repoProfiles,
+      [profileRepo]: normalizeProfile({
+        ciPrefix: ciPrefix.value,
+        mainPipeline: mainPipeline.value,
+        ciCommands: hasCommands ? commands : null,
+        quickLabels: quickLabels.value.split(",").map((label) => label.trim()).filter(Boolean),
+        mergeMethod: mergeMethod.value
+      }, REPO_PROFILES[profileRepo] || GENERIC_PROFILE)
+    };
     if (notify.checked && "Notification" in window && Notification.permission !== "granted") {
       state.prefs.notify = (await Notification.requestPermission()) === "granted";
       if (!state.prefs.notify) toast("Browser notifications are blocked for this site", "error");
@@ -2315,36 +2456,58 @@ function openSettings() {
     persistPrefs();
     closeModal();
   };
-  mountModal({}, el("div", { class: "modal small" }, [
-    el("h2", { text: `Settings · ${state.user.login}` }),
-    el("label", { class: "field" }, ["Default repository", repoInput]),
-    el("p", { class: "muted small", text: "Used for bare PR numbers and for the Add PRs lists." }),
-    el("label", { class: "field" }, ["Refresh open PRs every", interval]),
-    el("label", { class: "check-row" }, [notify, "Browser notification when CI finishes"]),
-    el("label", { class: "field" }, ["Following", following]),
-    el("p", { class: "muted small", text: "Their names are highlighted, and Add PRs gets a Following list." }),
-    el("div", { class: "field" }, [
-      "Board backup",
-      el("div", { class: "choices" }, [
-        el("button", { class: "btn", onclick: exportBoard, text: "Export to file" }),
-        el("button", { class: "btn", onclick: () => file.click(), text: "Import from file…" }),
-        file
-      ])
+  loadProfile();
+  mountModal({}, el("div", { class: "modal settings-modal" }, [
+    el("div", { class: "settings-body" }, [
+      el("h2", { text: `Settings · ${state.user.login}` }),
+      el("label", { class: "field" }, ["Default repository", repoInput]),
+      el("p", { class: "muted small", text: "Used for bare PR numbers and for the Add PRs lists." }),
+      el("h2", { text: "Repository workflow" }),
+      el("p", { class: "muted small", text: "These settings are saved in this browser. Choose the repository whose CI, commands, labels and merge behavior you want to configure." }),
+      el("div", { class: "field" }, [
+        "Workflow profile",
+        el("div", { class: "settings-profile-controls" }, [profileSelect, deleteProfileButton])
+      ]),
+      profileRepoField,
+      el("label", { class: "field" }, ["CI check prefix · blank means all checks", ciPrefix]),
+      el("label", { class: "field" }, ["Gating pipeline · blank means all pipelines", mainPipeline]),
+      el("div", { class: "field" }, [
+        "CI comment commands · leave all blank to disable",
+        ...PROFILE_COMMAND_KEYS.map((key) => el("label", { class: "field" }, [key === "stale" ? "Run stale branch" : `/${key}`, commandInputs[key]]))
+      ]),
+      el("label", { class: "field" }, ["Quick labels · comma-separated", quickLabels]),
+      el("label", { class: "field" }, ["Merge method", mergeMethod]),
+      el("label", { class: "field" }, ["Refresh open PRs every", interval]),
+      el("label", { class: "check-row" }, [notify, "Browser notification when CI finishes"]),
+      el("label", { class: "field" }, ["Following", following]),
+      el("p", { class: "muted small", text: "Their names are highlighted, and Add PRs gets a Following list." }),
+      el("p", { class: "muted small", text: `Your board is saved in this browser for ${location.host}. Export it to move it to another browser or address, or to keep a copy.` })
     ]),
-    el("p", { class: "muted small", text: `Your board is saved in this browser for ${location.host}. Export it to move it to another browser or address, or to keep a copy.` }),
-    el("div", { class: "choices" }, [
-      el("button", { class: "btn primary", onclick: save, text: "Save" }),
-      el("button", { class: "btn", onclick: () => { closeModal(); clearClosed(); }, text: "Clear merged / closed" }),
-      el("button", { class: "btn", onclick: openHelp, text: "Help & shortcuts" }),
-      el("button", {
-        class: "btn danger",
-        text: "Sign out",
-        onclick: () => openChoice({
-          title: "Sign out?",
-          body: "This removes the token from this browser. Your board stays saved for next time.",
-          options: [{ key: "Enter", label: "Sign out", danger: true, run: () => signOut() }]
+    el("div", { class: "settings-footer" }, [
+      el("div", { class: "settings-backup" }, [
+        el("span", { class: "muted small", text: "Board backup" }),
+        el("div", { class: "choices" }, [
+          el("button", { class: "btn", onclick: exportBoard, text: "Export board + settings" }),
+          el("button", { class: "btn", onclick: () => file.click(), text: "Import board + settings…" }),
+          file
+        ])
+      ]),
+      el("div", { class: "settings-actions" }, [
+        el("div", { class: "choices" }, [
+          el("button", { class: "btn primary", onclick: save, text: "Save" }),
+          el("button", { class: "btn", onclick: () => { closeModal(); clearClosed(); }, text: "Clear merged / closed" }),
+          el("button", { class: "btn", onclick: openHelp, text: "Help & shortcuts" })
+        ]),
+        el("button", {
+          class: "btn danger",
+          text: "Sign out",
+          onclick: () => openChoice({
+            title: "Sign out?",
+            body: "This removes the token from this browser. Your board stays saved for next time.",
+            options: [{ key: "Enter", label: "Sign out", danger: true, run: () => signOut() }]
+          })
         })
-      })
+      ])
     ])
   ]));
 }

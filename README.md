@@ -47,7 +47,7 @@ Keyboard shortcuts exist for all of it; press `?` for the list.
 
 ## Token
 
-Pingboard takes a **classic** personal access token with the `repo` scope (`public_repo` is enough for public repositories). It is sent only from your browser to `api.github.com`, and is kept in `sessionStorage` — or `localStorage` if you tick "Keep token after closing this tab". The board itself (pins, groups, preferences) lives in `localStorage` per GitHub login, so it belongs to one browser and one address. Settings has **Export to file** and **Import from file** to back it up or move it.
+Pingboard takes a **classic** personal access token with the `repo` scope (`public_repo` is enough for public repositories). It is sent only from your browser to `api.github.com`, and is kept in `sessionStorage` — or `localStorage` if you tick "Keep token after closing this tab". The board itself (pins, groups, preferences) lives in `localStorage` per GitHub login, so it belongs to one browser and one address. Settings has **Export board + settings** and **Import board + settings** buttons to back it up or move it. The backup never includes the GitHub token.
 
 ## Refresh and rate limits
 
@@ -55,7 +55,7 @@ Open PRs refresh every 60 seconds by default (configurable), background tabs fiv
 
 ## Other repositories
 
-`owner/repo#123` or a URL pins a PR from anywhere. Repository-specific workflow — which checks count as CI, the comment commands, the quick labels — lives in `REPO_PROFILES` at the top of `app.js`. Repositories without a profile treat every check as CI and have no CI commands.
+`owner/repo#123` or a URL pins a PR from anywhere. The Settings button also lets you configure a repository's workflow directly in the browser: which checks count as CI, the gating pipeline, comment commands, quick labels, and merge method. Profiles are selectable from a dropdown and can be deleted; deleting a built-in profile override restores its built-in defaults. These overrides are cached in `localStorage` with the rest of that GitHub user's preferences, so they work on the published site and survive reloads. Built-in defaults live in `REPO_PROFILES` at the top of `app.js`; repositories without a saved or built-in profile start with every check treated as CI and no CI commands.
 
 ## Run it
 

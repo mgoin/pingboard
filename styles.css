@@ -414,6 +414,15 @@ a.num:hover { text-decoration: underline; color: var(--text); }
 .choices { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
 .field { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
 .check-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.settings-modal { padding: 0; gap: 0; overflow: hidden; }
+.settings-body { display: grid; flex: 1 1 auto; gap: 12px; min-height: 0; padding: 18px; overflow-y: auto; }
+.settings-profile-controls { display: flex; gap: 8px; }
+.settings-profile-controls select { flex: 1; min-width: 0; }
+.profile-repo-input[readonly] { color: var(--muted); background: var(--panel-soft); cursor: default; }
+.settings-footer { flex: 0 0 auto; background: var(--panel); border-top: 1px solid var(--line); }
+.settings-backup { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 10px 18px 0; }
+.settings-actions { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 12px 18px; background: var(--panel); }
+.settings-actions .choices { margin-top: 0; }
 
 .picker-input { width: 100%; padding: 9px 11px; font-size: 15px; }
 .picker-list { min-height: 140px; max-height: 50vh; overflow-y: auto; border: 1px solid var(--line); border-radius: var(--radius); }
