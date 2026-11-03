@@ -61,7 +61,7 @@ Open PRs refresh every 60 seconds by default (configurable), background tabs fiv
 
 ## Other repositories
 
-`owner/repo#123` or a URL pins a PR from anywhere. The Settings button also lets you configure a repository's workflow directly in the browser: which checks count as CI, the gating pipeline, comment commands, quick labels, and merge method. Profiles are selectable from a dropdown and can be deleted; deleting a built-in profile override restores its built-in defaults. These overrides are cached in `localStorage` with the rest of that GitHub user's preferences, so they work on the published site and survive reloads. Built-in defaults live in `REPO_PROFILES` at the top of `app.js`; repositories without a saved or built-in profile start with every check treated as CI and no CI commands.
+`owner/repo#123` or a URL pins a PR from anywhere. The Settings button also lets you configure a repository's workflow directly in the browser: which checks count as CI, the gating pipeline, comment commands, quick labels, and merge method. Profiles are selectable from a dropdown and can be deleted; deleting a built-in profile override restores its built-in defaults. These overrides are cached in `localStorage` with the rest of that GitHub user's preferences, so they work on the published site and survive reloads. Built-in defaults live in `REPO_PROFILES` in `core.js`; repositories without a saved or built-in profile start with every check treated as CI and no CI commands.
 
 ## Run it
 
@@ -73,10 +73,25 @@ python3 -m http.server 8080
 
 The included workflow publishes the folder to GitHub Pages on every push to `main`.
 
+## MCP server
+
+The optional [local MCP server](mcp/README.md) lets an assistant read and manage a board, find PRs requesting your review, compare CI failures, and run, retry or cancel CI. It also supports updating a branch before running CI. The server and browser share the same profiles and status logic in `core.js`.
+
+The MCP board is stored in a local JSON file. Use the browser's **Export board + settings** with the MCP's `import_board` tool to transfer it; snapshots are not live-synced. The static website still works without Node or the MCP server.
+
 ## Tests
 
 ```bash
 ./tests/run
 ```
 
-Runs the checks every pull request has to pass. It needs [Bun](https://bun.sh) and installs everything else itself.
+Runs the browser compatibility checks. It needs [Bun](https://bun.sh) and installs everything else itself.
+
+For the MCP server, using Node.js 22 or newer:
+
+```bash
+npm ci --prefix mcp
+npm test --prefix mcp
+```
+
+CI runs both suites. MCP tests mock GitHub and never perform live CI or PR mutations.
