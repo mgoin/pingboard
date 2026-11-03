@@ -209,6 +209,7 @@ input[type="text"], input[type="search"], input[type="password"], select {
 .group-head { display: flex; align-items: center; gap: 10px; padding: 0 2px 6px; white-space: nowrap; }
 .group-toggle { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .group-sum { min-width: 0; overflow: hidden; }
+.group-search { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
 .group-toggle {
   display: inline-flex;
   gap: 6px;

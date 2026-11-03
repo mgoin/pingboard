@@ -36,6 +36,9 @@ const BOARD_WIDTH = 520;            // default list width in px; the detail pane
 const BOARD_MIN = 280;
 const DETAIL_MIN = 380;
 const RATE_FLOOR = 150;             // stop background polling below this many points
+const GROUP_SEARCH_MS = 5 * 60 * 1000;
+const UNPIN_CLOSED_MS = 24 * 60 * 60 * 1000;
+const DISMISSED_MAX = 200;          // unpinned search results remembered per group
 
 /* Per-repo workflow knowledge. Anything not listed gets GENERIC_PROFILE. */
 const REPO_PROFILES = {
@@ -184,14 +187,15 @@ const state = {
   authLoading: false,
   authError: "",
 
-  board: { groups: [], pins: [] },   // pins: [{key, repo, number, group, addedAt, seen, seenActivity}]
-  prefs: { interval: 60, notify: false, defaultRepo: DEFAULT_REPO, boardWidth: BOARD_WIDTH, following: [], repoProfiles: {}, sort: "manual", filter: "all", owner: "all" },
+  board: { groups: [], pins: [] },   // groups: [{id, name, collapsed, query?, dismissed?}]; pins: [{key, repo, number, group, addedAt, seen, seenActivity, via}]
+  prefs: { interval: 60, notify: false, defaultRepo: DEFAULT_REPO, boardWidth: BOARD_WIDTH, following: [], repoProfiles: {}, sort: "manual", filter: "all", owner: "all", unpinClosed: false },
 
   data: new Map(),        // pin key -> PR model
   status: new Map(),      // pin key -> {at, loading, error}
   baselines: new Map(),   // "repo@branch" -> {at, total, counts: Map(jobKey -> commits failing)}
   commitFailures: new Map(), // "repo@oid" -> {hasCI, failed: [jobKey]} for finished base commits
   labels: new Map(),      // repo -> {at, items: [{name, color}]}
+  searches: new Map(),    // group id -> {at, loading, error, missing: Set(pin key)}
 
   cursor: null,
   query: "",
@@ -218,7 +222,8 @@ function normalizePrefs(raw) {
     repoProfiles: normalizeRepoProfiles(prefs.repoProfiles),
     sort: SORTS.some((sort) => sort.id === prefs.sort) ? prefs.sort : "manual",
     filter: FILTERS.some((filter) => filter.id === prefs.filter) ? prefs.filter : "all",
-    owner: OWNERS.some((owner) => owner.id === prefs.owner) ? prefs.owner : "all"
+    owner: OWNERS.some((owner) => owner.id === prefs.owner) ? prefs.owner : "all",
+    unpinClosed: Boolean(prefs.unpinClosed)
   };
 }
 
@@ -234,7 +239,15 @@ function cleanBoard(raw) {
   if (!Array.isArray(raw?.groups) || !Array.isArray(raw.pins)) return null;
   const groups = raw.groups
     .filter((group) => group && typeof group.id === "string" && typeof group.name === "string" && group.name.trim())
-    .map((group) => ({ id: group.id, name: group.name.trim(), collapsed: Boolean(group.collapsed) }));
+    .map((group) => ({
+      id: group.id,
+      name: group.name.trim(),
+      collapsed: Boolean(group.collapsed),
+      ...(typeof group.query === "string" && group.query.trim() ? {
+        query: group.query.trim(),
+        dismissed: (Array.isArray(group.dismissed) ? group.dismissed : []).filter((key) => /^[\w.-]+\/[\w.-]+#\d+$/.test(key)).slice(-DISMISSED_MAX)
+      } : {})
+    }));
   if (!groups.length) return null;
   const seen = new Set();
   const pins = [];
@@ -250,7 +263,8 @@ function cleanBoard(raw) {
       group: groups.some((group) => group.id === pin.group) ? pin.group : groups[0].id,
       addedAt: Number(pin.addedAt) || Date.now(),
       ...(typeof pin.seen === "string" ? { seen: pin.seen } : {}),
-      ...(typeof pin.seenActivity === "string" ? { seenActivity: pin.seenActivity } : {})
+      ...(typeof pin.seenActivity === "string" ? { seenActivity: pin.seenActivity } : {}),
+      ...(groups.some((group) => group.id === pin.via) ? { via: pin.via } : {})
     });
   }
   return { groups, pins };
@@ -320,7 +334,11 @@ async function importBoard(file) {
         key: "Enter",
         label: "Add to my board",
         run: () => {
-          const groupIds = new Map(board.groups.map((group) => [group.id, ensureGroup(group.name).id]));
+          const groupIds = new Map(board.groups.map((group) => {
+            const target = ensureGroup(group.name);
+            if (group.query && !target.query) Object.assign(target, { query: group.query, dismissed: group.dismissed });
+            return [group.id, target.id];
+          }));
           const added = board.pins.filter((pin) => addPin(pin.repo, pin.number, groupIds.get(pin.group))).length;
           applyPrefs();
           toast(`Added ${added} of ${count}`, "ok");
@@ -436,7 +454,7 @@ const CONTEXT_FIELDS = `
 
 const PR_FIELDS = `
 fragment PullRequestFields on PullRequest {
-  id number title url state isDraft updatedAt
+  id number title url state isDraft updatedAt closedAt
   author { login } authorAssociation
   baseRefName headRefOid
   mergeable mergeStateStatus reviewDecision
@@ -690,6 +708,7 @@ async function toPR(pin, repo, base, { force = false } = {}) {
     state: pr.state,
     isDraft: pr.isDraft,
     updatedAt: pr.updatedAt,
+    closedAt: pr.closedAt,
     author: pr.author?.login || "ghost",
     base,
     headOid: pr.headRefOid,
@@ -928,7 +947,62 @@ function tick() {
       const ttl = (pr && pr.state !== "OPEN" ? CLOSED_TTL_S : state.prefs.interval) * 1000 * slowdown;
       if (!status?.at || now - status.at >= ttl) queueRefresh(pin);
     }
+    for (const group of state.board.groups) {
+      if (group.query && now - (state.searches.get(group.id)?.at || 0) >= GROUP_SEARCH_MS * slowdown) syncGroup(group.id);
+    }
     refreshBaselines();
+  }
+  if (state.prefs.unpinClosed) {
+    const old = state.board.pins.filter((pin) => {
+      const pr = state.data.get(pin.key);
+      return pr && pr.state !== "OPEN" && now - Date.parse(pr.closedAt) > UNPIN_CLOSED_MS;
+    });
+    if (old.length) {
+      dropPins(old);
+      toast(`Unpinned ${old.length} merged/closed over a day ago`);
+    }
+  }
+  render();
+}
+
+/* Pin what a group's search finds, except results the user unpinned from it. A PR the
+   search pinned is unpinned once two searches in a row miss it while it is still open;
+   the forced refresh in between shows a merge as merged instead of making it vanish. */
+async function syncGroup(id) {
+  const group = state.board.groups.find((item) => item.id === id);
+  const status = state.searches.get(id) || { missing: new Set() };
+  if (!group?.query || status.loading) return;
+  const query = group.query;
+  state.searches.set(id, { ...status, loading: true });
+  try {
+    const data = await gql(SEARCH_QUERY, { query: `is:pr is:open ${query} sort:updated-desc` });
+    const current = state.board.groups.find((item) => item.id === id);   // another tab may have replaced the board
+    if (current?.query !== query) {
+      state.searches.delete(id);
+      return;
+    }
+    const found = new Set();
+    let added = 0;
+    for (const node of data.search.nodes) {
+      if (!node?.number) continue;
+      const repo = node.repository.nameWithOwner;
+      found.add(pinKey(repo, node.number));
+      if (!current.dismissed.includes(pinKey(repo, node.number)) && addPin(repo, node.number, id, id)) added += 1;
+    }
+    const missing = new Set();
+    // Only a complete result list shows that a PR left the search.
+    if (data.search.issueCount <= found.size) {
+      const leaving = state.board.pins.filter((pin) => pin.via === id && pin.group === id && !found.has(pin.key) && state.data.get(pin.key)?.state === "OPEN");
+      dropPins(leaving.filter((pin) => status.missing.has(pin.key)));
+      for (const pin of leaving.filter((item) => !status.missing.has(item.key))) {
+        missing.add(pin.key);
+        queueRefresh(pin, { force: true });
+      }
+    }
+    state.searches.set(id, { at: Date.now(), loading: false, error: "", missing });
+    if (added) toast(`Pinned ${added} from the "${current.name}" search`);
+  } catch (error) {
+    state.searches.set(id, { ...status, at: Date.now(), loading: false, error: error.message });
   }
   render();
 }
@@ -967,15 +1041,16 @@ function targetGroupId() {
   return cursorPin()?.group || state.board.groups[0].id;
 }
 
-function addPin(repo, number, group = targetGroupId()) {
+/* `via` is the group whose search pinned it, so that search may unpin it again. */
+function addPin(repo, number, group = targetGroupId(), via = null) {
   const key = pinKey(repo, number);
   if (pinByKey(key)) return false;
-  const pin = { key, repo, number, group, addedAt: Date.now() };
+  const pin = { key, repo, number, group, addedAt: Date.now(), ...(via ? { via } : {}) };
   state.board.pins.push(pin);
   // Ask the browser not to evict this site's storage under disk pressure.
   navigator.storage?.persist?.().catch(() => {});
   const target = state.board.groups.find((item) => item.id === group);
-  if (target) target.collapsed = false;
+  if (target && !via) target.collapsed = false;
   persistBoard();
   queueRefresh(pin);
   if (!state.cursor) state.cursor = key;
@@ -988,6 +1063,9 @@ function removePin(key) {
   const visible = visiblePins();
   const at = visible.findIndex((item) => item.key === key);
   const index = state.board.pins.indexOf(pin);
+  const searched = state.board.groups.find((group) => group.id === pin.group && group.query);
+  const dismissed = searched && !searched.dismissed.includes(key);
+  if (dismissed) searched.dismissed = searched.dismissed.concat(key).slice(-DISMISSED_MAX);
   state.board.pins.splice(index, 1);
   state.data.delete(key);
   state.status.delete(key);
@@ -997,6 +1075,8 @@ function removePin(key) {
     label: "Undo",
     run: () => {
       if (pinByKey(key)) return;
+      const from = dismissed && state.board.groups.find((item) => item.id === pin.group);
+      if (from?.dismissed) from.dismissed = from.dismissed.filter((item) => item !== key);
       if (!state.board.groups.some((group) => group.id === pin.group)) pin.group = state.board.groups[0].id;
       state.board.pins.splice(Math.min(index, state.board.pins.length), 0, pin);
       persistBoard();
@@ -1006,17 +1086,22 @@ function removePin(key) {
   });
 }
 
+/* Unpin without undo, and without remembering it as dismissed from a search. */
+function dropPins(pins) {
+  state.board.pins = state.board.pins.filter((pin) => !pins.includes(pin));
+  for (const pin of pins) {
+    state.data.delete(pin.key);
+    state.status.delete(pin.key);
+  }
+  persistBoard();
+}
+
 function clearClosed() {
   const closed = state.board.pins.filter((pin) => {
     const pr = state.data.get(pin.key);
     return pr && pr.state !== "OPEN";
   });
-  state.board.pins = state.board.pins.filter((pin) => !closed.includes(pin));
-  for (const pin of closed) {
-    state.data.delete(pin.key);
-    state.status.delete(pin.key);
-  }
-  persistBoard();
+  dropPins(closed);
   toast(closed.length ? `Cleared ${closed.length} merged/closed` : "Nothing merged or closed to clear");
 }
 
@@ -1073,6 +1158,30 @@ function renameGroup(group) {
       if (state.board.groups.some((other) => other !== group && other.name.toLowerCase() === name.toLowerCase())) return `There is already a group called "${name}".`;
       group.name = name;
       persistBoard();
+      return null;
+    }
+  });
+}
+
+function editGroupSearch(group) {
+  openPrompt({
+    title: `Sync "${group.name}" with a search`,
+    hint: "New open pull requests it finds are pinned here; ones it pinned leave when they stop matching. Leave blank to stop.",
+    value: group.query || "",
+    placeholder: "e.g. review-requested:@me label:ready",
+    submit: "Save",
+    allowEmpty: true,
+    onSubmit(text) {
+      // Scoped to the default repository like Add PRs, unless it names its own scope.
+      const query = !text || /(^|\s)(repo|org|user):/.test(text) ? text : `repo:${state.prefs.defaultRepo} ${text}`;
+      if (query) Object.assign(group, { query, dismissed: group.dismissed || [] });
+      else {
+        delete group.query;
+        delete group.dismissed;
+      }
+      state.searches.delete(group.id);
+      persistBoard();
+      tick();
       return null;
     }
   });
@@ -1769,6 +1878,7 @@ function renderBoard(index) {
         groupSummary(pins, index),
         el("span", { class: "spacer" }),
         el("button", { class: "link-btn", onclick: () => openAdd(group.id), text: "+ Add" }),
+        groupSearchButton(group),
         el("button", { class: "link-btn", onclick: () => renameGroup(group), text: "Rename" }),
         el("button", { class: "link-btn", onclick: () => deleteGroup(group), text: "Delete" })
       ]),
@@ -1783,6 +1893,18 @@ function renderBoard(index) {
   const { scrollTop } = board;
   board.replaceChildren(...sections);
   board.scrollTop = scrollTop;
+}
+
+function groupSearchButton(group) {
+  if (!group.query) return el("button", { class: "link-btn", onclick: () => editGroupSearch(group), text: "Sync search" });
+  const status = state.searches.get(group.id);
+  const detail = status?.error ? `Search failed: ${status.error}` : status?.at ? `Searched ${ago(status.at)} ago` : "Searching…";
+  return el("button", {
+    class: `link-btn group-search${status?.error ? " t-bad" : ""}`,
+    title: `Pins new results of: ${group.query}\n${detail}`,
+    onclick: () => editGroupSearch(group),
+    text: `⟳ ${group.query.replace(`repo:${state.prefs.defaultRepo} `, "")}`
+  });
 }
 
 function groupSummary(pins, index) {
@@ -2239,11 +2361,11 @@ function openChoice({ title, body, options }) {
 }
 
 /* One line of text. onSubmit returns an error message to keep the dialog open. */
-function openPrompt({ title, value = "", placeholder = "", submit, onSubmit }) {
+function openPrompt({ title, hint = "", value = "", placeholder = "", submit, allowEmpty = false, onSubmit }) {
   const error = el("p", { class: "t-bad small" });
   const send = () => {
     const text = input.value.trim();
-    if (!text) return;
+    if (!text && !allowEmpty) return;
     const problem = onSubmit(text);
     if (problem) error.textContent = problem;
     else closeModal();
@@ -2251,6 +2373,7 @@ function openPrompt({ title, value = "", placeholder = "", submit, onSubmit }) {
   const input = el("input", { type: "text", class: "picker-input", value, placeholder, "aria-label": title, spellcheck: "false", onkeydown: (event) => event.key === "Enter" && send() });
   mountModal({}, el("div", { class: "modal small" }, [
     el("h2", { text: title }),
+    hint ? el("p", { class: "muted small", text: hint }) : null,
     input,
     error,
     el("div", { class: "choices" }, [
@@ -2539,6 +2662,7 @@ function openSettings() {
   const mergeMethod = el("select", {}, ["merge", "rebase", "squash"].map((method) => el("option", { value: method, text: method })));
   const interval = el("select", {}, [30, 60, 120, 300].map((seconds) => el("option", { value: seconds, selected: seconds === state.prefs.interval, text: seconds < 60 ? `${seconds} seconds` : `${seconds / 60} minute${seconds > 60 ? "s" : ""}` })));
   const notify = el("input", { type: "checkbox", checked: state.prefs.notify });
+  const unpinClosed = el("input", { type: "checkbox", checked: state.prefs.unpinClosed });
   const following = el("input", { type: "text", value: state.prefs.following.join(" "), placeholder: "usernames, separated by spaces", spellcheck: "false", onkeydown: (event) => event.key === "Enter" && save() });
   const file = el("input", {
     type: "file",
@@ -2598,6 +2722,7 @@ function openSettings() {
     state.prefs.defaultRepo = repo;
     state.prefs.interval = Number(interval.value);
     state.prefs.notify = notify.checked;
+    state.prefs.unpinClosed = unpinClosed.checked;
     state.prefs.following = parseLogins(following.value);
     state.prefs.repoProfiles = {
       ...state.prefs.repoProfiles,
@@ -2639,6 +2764,7 @@ function openSettings() {
       el("label", { class: "field" }, ["Merge method", mergeMethod]),
       el("label", { class: "field" }, ["Refresh open PRs every", interval]),
       el("label", { class: "check-row" }, [notify, "Browser notification when CI finishes"]),
+      el("label", { class: "check-row" }, [unpinClosed, "Unpin merged/closed PRs after a day"]),
       el("label", { class: "field" }, ["Following", following]),
       el("p", { class: "muted small", text: "Their names are highlighted, and Add PRs gets a Following list." }),
       el("p", { class: "muted small", text: `Your board is saved in this browser for ${location.host}. Export it to move it to another browser or address, or to keep a copy.` })

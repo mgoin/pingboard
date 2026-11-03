@@ -113,6 +113,8 @@ async function load(session, dir) {
     groups: snapshot.board.groups.map((group) => group.name),
     collapsed: snapshot.board.groups.filter((group) => group.collapsed).map((group) => group.name),
     pins: snapshot.board.pins.map((pin) => `${pin.repo}#${pin.number} in ${groupName(pin.group)}`),
+    searches: snapshot.board.groups.filter((group) => group.query).map((group) => `${group.name}: ${group.query}; dismissed ${(group.dismissed || []).join(" ")}`),
+    searchPinned: snapshot.board.pins.filter((pin) => pin.via).map((pin) => `${pin.repo}#${pin.number} by ${groupName(pin.via)}`),
     prefs: snapshot.prefs,
     changed: snapshot.changed,
     errors: [...session.errors]
@@ -131,6 +133,8 @@ function compare(label, result, expected) {
   check(`${label}: collapsed groups`, result.collapsed, expected.collapsed);
   check(`${label}: pins`, result.pins, expected.pins);
   check(`${label}: changed dots`, result.changed, expected.changed);
+  check(`${label}: group searches`, result.searches, expected.searches || []);
+  check(`${label}: search-pinned`, result.searchPinned, expected.searchPinned || []);
   for (const [key, value] of Object.entries(expected.prefs)) check(`${label}: preference ${key}`, result.prefs[key], value);
   check(`${label}: page errors`, result.errors, []);
 }
