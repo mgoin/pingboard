@@ -44,7 +44,7 @@ test("imports merge groups and pins, roundtrip exports, and exclude secret field
       groups: [{ id: "external", name: "RELEASE" }],
       pins: [1, 2].map((number) => ({ repo, number, group: "external", addedAt: 123, token: "secret" }))
     },
-    prefs: { interval: 120, token: "secret" }
+    prefs: { interval: 120, sort: "status", filter: "requested", owner: "others", token: "secret" }
   };
   const merged = await store.importBoard(backup);
   assert.deepEqual(merged.board.groups.map((group) => group.name), ["Tracking", "Release"]);
@@ -54,6 +54,10 @@ test("imports merge groups and pins, roundtrip exports, and exclude secret field
   assert.equal(exported.pingboard, 1);
   assert.ok(Number.isFinite(Date.parse(exported.exportedAt)));
   assert.equal(exported.prefs.interval, 120);
+  assert.equal(exported.prefs.sort, "status");
+  assert.equal(exported.prefs.filter, "requested");
+  assert.equal(exported.prefs.owner, "others");
+  assert.deepEqual(await new BoardStore(filePath).read(), merged);
   assert.ok(!JSON.stringify(exported).includes("secret"));
   assert.ok(!(await readFile(filePath, "utf8")).includes("secret"));
   await store.clear();

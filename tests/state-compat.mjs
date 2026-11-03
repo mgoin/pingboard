@@ -25,6 +25,24 @@ function option(name) {
   return at === -1 ? null : path.resolve(process.argv[at + 1]);
 }
 
+function mockRepository(owner, name, number) {
+  const oid = "a".repeat(40);
+  const now = new Date().toISOString();
+  return {
+    ref: { compare: { aheadBy: 1, behindBy: 0 } },
+    pullRequest: {
+      id: `PR_${number}`, number, title: `Test pull request ${number}`,
+      url: `https://github.com/${owner}/${name}/pull/${number}`,
+      state: "OPEN", isDraft: false, updatedAt: now, author: { login: "someone" }, authorAssociation: "MEMBER",
+      baseRefName: "main", headRefOid: oid, mergeable: "MERGEABLE", mergeStateStatus: "CLEAN", reviewDecision: null,
+      viewerCanUpdateBranch: true, viewerCanEnableAutoMerge: true, autoMergeRequest: null,
+      additions: 1, deletions: 1, changedFiles: 1,
+      labels: { nodes: [] }, latestOpinionatedReviews: { nodes: [] }, reviewRequests: { nodes: [] }, comments: { nodes: [] },
+      commits: { nodes: [{ commit: { oid, committedDate: now, statusCheckRollup: null } }] }
+    }
+  };
+}
+
 /* Just enough of api.github.com for the board to load and refresh its pins. */
 function mockGitHub(request, login) {
   const url = new URL(request.url());
@@ -32,21 +50,10 @@ function mockGitHub(request, login) {
   if (url.pathname !== "/graphql") return [];
   const { query, variables = {} } = JSON.parse(request.postData() || "{}");
   if (query.includes("pullRequest(number:")) {
-    const oid = "a".repeat(40);
-    const now = new Date().toISOString();
-    return { data: { repository: {
-      ref: { compare: { aheadBy: 1, behindBy: 0 } },
-      pullRequest: {
-        id: `PR_${variables.number}`, number: variables.number, title: `Test pull request ${variables.number}`,
-        url: `https://github.com/${variables.owner}/${variables.name}/pull/${variables.number}`,
-        state: "OPEN", isDraft: false, updatedAt: now, author: { login: "someone" }, authorAssociation: "MEMBER",
-        baseRefName: "main", headRefOid: oid, mergeable: "MERGEABLE", mergeStateStatus: "CLEAN", reviewDecision: null,
-        viewerCanUpdateBranch: true, viewerCanEnableAutoMerge: true, autoMergeRequest: null,
-        additions: 1, deletions: 1, changedFiles: 1,
-        labels: { nodes: [] }, latestOpinionatedReviews: { nodes: [] }, comments: { nodes: [] },
-        commits: { nodes: [{ commit: { oid, committedDate: now, statusCheckRollup: null } }] }
-      }
-    } } };
+    // Older versions read one PR per request; newer ones batch them as pr0, pr1, … with suffixed variables.
+    if ("number" in variables) return { data: { repository: mockRepository(variables.owner, variables.name, variables.number) } };
+    const aliases = Object.keys(variables).filter((key) => /^number\d+$/.test(key)).map((key) => key.slice(6));
+    return { data: Object.fromEntries(aliases.map((i) => [`pr${i}`, mockRepository(variables[`owner${i}`], variables[`name${i}`], variables[`number${i}`])])) };
   }
   if (query.includes("history(first:")) return { data: { repository: { ref: { target: { history: { nodes: [] } } } } } };
   if (query.includes("search(")) return { data: { search: { issueCount: 0, nodes: [] } } };

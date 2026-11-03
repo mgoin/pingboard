@@ -86,7 +86,10 @@ function normalizePrefs(raw) {
     boardWidth: Number(prefs.boardWidth) || BOARD_WIDTH,
     defaultRepo: /^[\w.-]+\/[\w.-]+$/.test(prefs.defaultRepo || "") ? prefs.defaultRepo : DEFAULT_REPO,
     following: parseLogins(Array.isArray(prefs.following) ? prefs.following.join(" ") : ""),
-    repoProfiles: normalizeRepoProfiles(prefs.repoProfiles)
+    repoProfiles: normalizeRepoProfiles(prefs.repoProfiles),
+    sort: ["manual", "updated", "added", "number", "status"].includes(prefs.sort) ? prefs.sort : "manual",
+    filter: ["all", "failing", "running", "green", "noci", "closed", "requested"].includes(prefs.filter) ? prefs.filter : "all",
+    owner: ["all", "mine", "others"].includes(prefs.owner) ? prefs.owner : "all"
   };
 }
 

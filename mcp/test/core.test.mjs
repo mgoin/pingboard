@@ -31,6 +31,33 @@ test("cleared built-in profile settings survive normalization and reload", () =>
   assert.equal(Core.profileFor(repo).ciCommands.run, "/ci run");
 });
 
+test("saved browser view preferences survive shared normalization and JSON roundtrips", () => {
+  for (const view of [
+    { sort: "manual", filter: "all", owner: "all" },
+    { sort: "updated", filter: "failing", owner: "mine" },
+    { sort: "added", filter: "running", owner: "others" },
+    { sort: "number", filter: "green", owner: "all" },
+    { sort: "status", filter: "noci", owner: "mine" },
+    { sort: "manual", filter: "closed", owner: "others" },
+    { sort: "updated", filter: "requested", owner: "mine" }
+  ]) {
+    const prefs = Core.normalizePrefs(view);
+    for (const [key, value] of Object.entries(view)) assert.equal(prefs[key], value, key);
+    assert.deepEqual(Core.normalizePrefs(JSON.parse(JSON.stringify(prefs))), prefs);
+  }
+});
+
+test("missing or malformed browser view preferences use the existing defaults", () => {
+  for (const raw of [undefined, null, {},
+    { sort: "unknown", filter: "unknown", owner: "unknown" },
+    { sort: [], filter: {}, owner: 1 },
+    { sort: null, filter: null, owner: null }
+  ]) {
+    const { sort, filter, owner } = Core.normalizePrefs(raw);
+    assert.deepEqual({ sort, filter, owner }, { sort: "manual", filter: "all", owner: "all" });
+  }
+});
+
 test("queued retries and timestamp ties cannot look passed in either API order", () => {
   const success = checkRun("SUCCESS");
   const pending = checkRun(null, "IN_PROGRESS");
