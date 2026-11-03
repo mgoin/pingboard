@@ -19,6 +19,7 @@
   "expect": {
     "groups": ["Tracking", "Release blockers"],
     "collapsed": [],
+    "changed": ["vllm-project/vllm#60447"],
     "pins": [
       "vllm-project/vllm#60447 in Tracking",
       "vllm-project/vllm#60456 in Release blockers",

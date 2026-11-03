@@ -1,0 +1,26 @@
+{
+  "description": "Pins that remember the newest comment or review already seen (seenActivity). The mocked PRs have a comment from someone else at 2026-01-01 and a newer one from the user, which never lights the dot.",
+  "login": "pingboard-tester",
+  "localStorage": {
+    "pingboard.githubToken": "test-token",
+    "pingboard.v3.pingboard-tester.board": {
+      "groups": [{ "id": "g1", "name": "Tracking", "collapsed": false }],
+      "pins": [
+        { "key": "vllm-project/vllm#1", "repo": "vllm-project/vllm", "number": 1, "group": "g1", "addedAt": 1791470000000, "seen": "OPEN|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|none|0|", "seenActivity": "2025-12-31T00:00:00Z" },
+        { "key": "vllm-project/vllm#2", "repo": "vllm-project/vllm", "number": 2, "group": "g1", "addedAt": 1791470001000, "seen": "OPEN|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|none|0|", "seenActivity": "2026-01-01T00:00:00Z" },
+        { "key": "vllm-project/vllm#3", "repo": "vllm-project/vllm", "number": 3, "group": "g1", "addedAt": 1791470002000, "seen": "OPEN|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|none|0|" }
+      ]
+    }
+  },
+  "expect": {
+    "groups": ["Tracking"],
+    "collapsed": [],
+    "pins": [
+      "vllm-project/vllm#1 in Tracking",
+      "vllm-project/vllm#2 in Tracking",
+      "vllm-project/vllm#3 in Tracking"
+    ],
+    "changed": ["vllm-project/vllm#1"],
+    "prefs": {}
+  }
+}

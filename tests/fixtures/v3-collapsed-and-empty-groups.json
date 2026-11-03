@@ -20,6 +20,7 @@
   "expect": {
     "groups": ["Tracking", "Watching", "Mine"],
     "collapsed": ["Tracking"],
+    "changed": [],
     "pins": [
       "vllm-project/vllm#59826 in Tracking",
       "vllm-project/vllm#60196 in Tracking",

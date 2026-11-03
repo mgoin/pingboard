@@ -20,7 +20,7 @@ Each row is one pull request with a status and, where there is an obvious next s
 | **Ready to merge** | green and approved | Merge… |
 | **Merge conflicts** | the author has to resolve them | — |
 
-A blue dot marks a PR that changed since you last selected it. Drag rows to reorder them or move them between groups, and drag the divider to resize the list.
+A blue dot marks a PR that changed since you last selected it: its state, commits, CI or review decision, or a new comment or review from someone other than you. Drag rows to reorder them or move them between groups, and drag the divider to resize the list.
 
 Selecting a row opens the detail pane: the status with a one-line explanation, the failing and running jobs (each links to its Buildkite job), branch freshness, reviews, labels, and the latest comments — which is where the CI bot answers `/ci` commands.
 

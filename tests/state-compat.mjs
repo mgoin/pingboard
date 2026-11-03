@@ -1,7 +1,8 @@
 /* Would this change lose or mangle a board that people already have saved?
 
    For every fixture in tests/fixtures (the browser storage of an existing user):
-     1. the app under test loads it and shows the same groups, pins and preferences;
+     1. the app under test loads it and shows the same groups, pins, preferences and
+        "changed since you last looked" dots;
      2. a reload gives the same result (what it wrote back is readable);
      3. with --base, the previous version loads the fixture first and writes its own
         state, then the app under test takes over that storage and nothing changes.
@@ -43,7 +44,11 @@ function mockGitHub(request, login) {
         baseRefName: "main", headRefOid: oid, mergeable: "MERGEABLE", mergeStateStatus: "CLEAN", reviewDecision: null,
         viewerCanUpdateBranch: true, viewerCanEnableAutoMerge: true, autoMergeRequest: null,
         additions: 1, deletions: 1, changedFiles: 1,
-        labels: { nodes: [] }, latestOpinionatedReviews: { nodes: [] }, comments: { nodes: [] },
+        labels: { nodes: [] }, latestOpinionatedReviews: { nodes: [] }, reviews: { nodes: [] },
+        comments: { nodes: [
+          { author: { login: "someone" }, bodyText: "a comment", createdAt: "2026-01-01T00:00:00Z", url: "https://github.com/" },
+          { author: { login }, bodyText: "the user's own comment", createdAt: "2026-01-02T00:00:00Z", url: "https://github.com/" }
+        ] },
         commits: { nodes: [{ commit: { oid, committedDate: now, statusCheckRollup: null } }] }
       }
     } } };
@@ -93,13 +98,16 @@ async function load(session, dir) {
   // `state` is the app's top-level state object; signed in means the saved board has been read.
   await session.page.waitForFunction(() => typeof state !== "undefined" && Boolean(state.user), null, { timeout: 15000 });
   await session.page.waitForTimeout(1500);   // let the pin refreshes land and be written back
-  const snapshot = await session.page.evaluate(() => JSON.parse(JSON.stringify({ board: state.board, prefs: state.prefs })));
+  const snapshot = await session.page.evaluate(() => JSON.parse(JSON.stringify({
+    board: state.board, prefs: state.prefs, changed: state.board.pins.filter(hasChanged).map((pin) => pin.key)
+  })));
   const groupName = (id) => snapshot.board.groups.find((group) => group.id === id)?.name ?? `<missing group ${id}>`;
   return {
     groups: snapshot.board.groups.map((group) => group.name),
     collapsed: snapshot.board.groups.filter((group) => group.collapsed).map((group) => group.name),
     pins: snapshot.board.pins.map((pin) => `${pin.repo}#${pin.number} in ${groupName(pin.group)}`),
     prefs: snapshot.prefs,
+    changed: snapshot.changed,
     errors: [...session.errors]
   };
 }
@@ -115,6 +123,7 @@ function compare(label, result, expected) {
   check(`${label}: groups`, result.groups, expected.groups);
   check(`${label}: collapsed groups`, result.collapsed, expected.collapsed);
   check(`${label}: pins`, result.pins, expected.pins);
+  check(`${label}: changed dots`, result.changed, expected.changed);
   for (const [key, value] of Object.entries(expected.prefs)) check(`${label}: preference ${key}`, result.prefs[key], value);
   check(`${label}: page errors`, result.errors, []);
 }
@@ -142,7 +151,7 @@ for (const name of (await readdir(fixtureDir)).filter((file) => file.endsWith(".
     } catch (error) {
       console.log(`  skipped upgrade check: the base version did not load a board (${error.message.split("\n")[0]})`);
     }
-    if (before) compare("board written by the base version loads", await load(session, head), { ...before, prefs: fixture.expect.prefs });
+    if (before) compare("board written by the base version loads", await load(session, head), { ...before, prefs: fixture.expect.prefs, changed: fixture.expect.changed });
   }
   await session.context.close();
 }

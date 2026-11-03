@@ -183,7 +183,7 @@ const state = {
   authLoading: false,
   authError: "",
 
-  board: { groups: [], pins: [] },   // pins: [{key, repo, number, group, addedAt, seen}]
+  board: { groups: [], pins: [] },   // pins: [{key, repo, number, group, addedAt, seen, seenActivity}]
   prefs: { interval: 60, notify: false, defaultRepo: DEFAULT_REPO, boardWidth: BOARD_WIDTH, following: [], repoProfiles: {} },
 
   data: new Map(),        // pin key -> PR model
@@ -246,7 +246,8 @@ function cleanBoard(raw) {
       number: pin.number,
       group: groups.some((group) => group.id === pin.group) ? pin.group : groups[0].id,
       addedAt: Number(pin.addedAt) || Date.now(),
-      ...(typeof pin.seen === "string" ? { seen: pin.seen } : {})
+      ...(typeof pin.seen === "string" ? { seen: pin.seen } : {}),
+      ...(typeof pin.seenActivity === "string" ? { seenActivity: pin.seenActivity } : {})
     });
   }
   return { groups, pins };
@@ -445,6 +446,7 @@ query($owner: String!, $name: String!, $number: Int!, $baseRef: String!, $headRe
       labels(first: 40) { nodes { name color } }
       latestOpinionatedReviews(first: 20) { nodes { state author { login } } }
       comments(last: 5) { nodes { author { login } bodyText createdAt url } }
+      reviews(last: 5) { nodes { author { login } submittedAt } }
       commits(last: 1) { nodes { commit {
         oid committedDate
         statusCheckRollup { state contexts(first: 100) {
@@ -658,6 +660,7 @@ async function fetchPR(pin, { force = false } = {}) {
     labels: pr.labels.nodes,
     reviews: pr.latestOpinionatedReviews.nodes.map((review) => ({ login: review.author?.login || "ghost", state: review.state })),
     comments: pr.comments.nodes.map((comment) => ({ login: comment.author?.login || "ghost", text: comment.bodyText.slice(0, 700), at: comment.createdAt, url: safeUrl(comment.url) })),
+    activityAt: newestActivity(pr),
     behind: repo.ref?.compare?.behindBy ?? null,
     checks,
     fingerprint,
@@ -670,9 +673,17 @@ function signature(pr) {
   return [pr.state, pr.headOid, pr.ci.state, pr.ci.fail, pr.reviewDecision].join("|");
 }
 
+/* Newest comment or review by someone else; COMMENTED reviews and repeat approvals don't change reviewDecision. */
+function newestActivity(pr) {
+  const items = pr.comments.nodes.map((comment) => [comment.author?.login, comment.createdAt])
+    .concat(pr.reviews.nodes.map((review) => [review.author?.login, review.submittedAt]));
+  return items.reduce((newest, [login, at]) => (at && login !== state.user.login && at > newest ? at : newest), "");
+}
+
 function hasChanged(pin) {
   const pr = state.data.get(pin.key);
-  return Boolean(pr && pin.seen && pin.seen !== signature(pr));
+  if (!pr) return false;
+  return Boolean(pin.seen && pin.seen !== signature(pr)) || (pin.seenActivity !== undefined && pr.activityAt > pin.seenActivity);
 }
 
 /* Failing-job evidence, without reading logs:
@@ -808,8 +819,10 @@ async function refreshPin(pin, options = {}) {
     state.status.set(pin.key, { at: Date.now(), loading: false, error: "", unknownTries });
     if (unknownTries && unknownTries <= 2) setTimeout(() => pinByKey(pin.key) && queueRefresh(pin), 4000);
     state.lastSync = Date.now();
-    if (!pin.seen) {
-      pin.seen = signature(pr);
+    // Pins saved before seenActivity existed start from what is there now, so upgrading lights no dots.
+    if (!pin.seen || pin.seenActivity === undefined) {
+      pin.seen ||= signature(pr);
+      pin.seenActivity ??= pr.activityAt;
       persistBoard();
     }
     if (prev && prev.headOid === pr.headOid && prev.ci.state === "running" && pr.ci.state !== "running") announceCi(pr);
@@ -1093,8 +1106,9 @@ function visiblePins() {
 function acknowledge(key) {
   const pin = pinByKey(key);
   const pr = state.data.get(key);
-  if (!pin || !pr || pin.seen === signature(pr)) return;
+  if (!pin || !pr || (pin.seen === signature(pr) && pin.seenActivity === pr.activityAt)) return;
   pin.seen = signature(pr);
+  pin.seenActivity = pr.activityAt;
   persistBoard();
 }
 
