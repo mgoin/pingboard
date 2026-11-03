@@ -185,6 +185,7 @@ input[type="text"], input[type="search"], input[type="password"], select {
 .f-green .count { color: var(--good); }
 
 .filter { width: 190px; padding: 4px 9px; }
+.sort { padding: 4px 9px; }
 .top-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 .sync { font-size: 12px; color: var(--quiet); white-space: nowrap; }
 .sync.busy { color: var(--accent); }
