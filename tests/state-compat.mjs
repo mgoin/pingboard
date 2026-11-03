@@ -38,7 +38,7 @@ function mockRepository(owner, name, number, login) {
       baseRefName: "main", headRefOid: oid, mergeable: "MERGEABLE", mergeStateStatus: "CLEAN", reviewDecision: null,
       viewerCanUpdateBranch: true, viewerCanEnableAutoMerge: true, autoMergeRequest: null,
       additions: 1, deletions: 1, changedFiles: 1,
-      labels: { nodes: [] }, latestOpinionatedReviews: { nodes: [] }, reviews: { nodes: [] },
+      labels: { nodes: [] }, latestOpinionatedReviews: { nodes: [] }, reviewRequests: { nodes: [] }, reviews: { nodes: [] },
       comments: { nodes: [
         { author: { login: "someone" }, bodyText: "a comment", createdAt: "2026-01-01T00:00:00Z", url: "https://github.com/" },
         { author: { login }, bodyText: "the user's own comment", createdAt: "2026-01-02T00:00:00Z", url: "https://github.com/" }
