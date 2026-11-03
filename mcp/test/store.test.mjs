@@ -65,6 +65,40 @@ test("imports merge groups and pins, roundtrip exports, and exclude secret field
   await assert.rejects(store.importBoard({ ...backup, pingboard: 2 }), /Unsupported/);
 });
 
+test("browser search groups preserve metadata and remap search-pinned sources across imports", async (t) => {
+  const { filePath, store } = await setup(t);
+  const fixture = JSON.parse(await readFile(new URL("../../tests/fixtures/v3-search-groups.json", import.meta.url), "utf8"));
+  const backup = {
+    board: fixture.localStorage[`pingboard.v3.${fixture.login}.board`],
+    prefs: fixture.localStorage[`pingboard.v3.${fixture.login}.prefs`]
+  };
+  const original = await store.track({ repo, number: 99, group: "Review requests" });
+  const merged = await store.importBoard(backup);
+  const source = backup.board.groups.find((group) => group.query);
+  const target = merged.board.groups.find((group) => group.id === original.pin.group);
+  assert.notEqual(target.id, source.id);
+  assert.equal(target.query, source.query);
+  assert.deepEqual(target.dismissed, source.dismissed);
+  assert.equal(merged.prefs.unpinClosed, true);
+  for (const pin of backup.board.pins.filter((pin) => pin.via)) {
+    const imported = merged.board.pins.find((item) => item.key === pin.key);
+    assert.equal(imported.via, target.id);
+    assert.equal(imported.group, pin.group === source.id ? target.id : "g1");
+  }
+  assert.deepEqual(await new BoardStore(filePath).read(), merged);
+  const exported = await store.exportBoard();
+  assert.deepEqual(exported.board, merged.board);
+  assert.deepEqual(exported.prefs, merged.prefs);
+  await store.clear();
+  assert.deepEqual(await store.importBoard(exported, { mode: "replace" }), merged);
+
+  const conflicting = structuredClone(backup);
+  const conflictingGroup = conflicting.board.groups.find((group) => group.query);
+  conflictingGroup.query = "repo:vllm-project/vllm author:someone";
+  conflictingGroup.dismissed = [];
+  assert.deepEqual(await store.importBoard(conflicting), merged);
+});
+
 test("corrupt files reject writes without losing data, and the queue recovers", async (t) => {
   const { filePath, store } = await setup(t);
   const saved = await store.exportBoard();

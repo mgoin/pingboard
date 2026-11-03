@@ -28,6 +28,10 @@ Selecting a row opens the detail pane: the status with a one-line explanation, t
 
 **+ Add PRs** lists open pull requests in your default repository (yours, review requested, reviewed, involved, `ready`, all recent) and narrows as you type. Click to pin; pasting PR numbers or URLs works too. Type `@name` to see one author's PRs. To keep an eye on particular people, **Follow** them from a PR (or list them in Settings): their names are highlighted everywhere and Add PRs gets a **Following** list.
 
+**Sync search** in a group's header keeps that group in step with a GitHub search such as `review-requested:@me` or `author:@me label:ready`. Every five minutes Pingboard pins new open PRs it finds into the group. A PR the search pinned is unpinned again once it stops matching while still open; PRs you pinned yourself or moved to another group stay put, and one you unpin is not pinned again. Searches without a `repo:`, `org:` or `user:` qualifier are scoped to your default repository. Clear the search to stop syncing.
+
+Settings can also **unpin merged/closed PRs after a day** (off by default); **Clear merged / closed** does it at once.
+
 ## Related or unrelated failures
 
 Pingboard does not read logs — Buildkite logs are not reachable from a static page. It sorts failing jobs using what GitHub already knows:
@@ -53,7 +57,7 @@ Pingboard takes a **classic** personal access token with the `repo` scope (`publ
 
 ## Refresh and rate limits
 
-Open PRs refresh every 60 seconds by default (configurable), background tabs five times slower, reading up to 10 PRs per GraphQL request. The base-branch baseline covers the last 30 commits and is re-read every 10 minutes. Remaining API quota is shown in the top bar, and polling pauses if it runs low.
+Open PRs refresh every 60 seconds by default (configurable), background tabs five times slower, reading up to 10 PRs per GraphQL request. The base-branch baseline covers the last 30 commits and is re-read every 10 minutes. Group searches run every 5 minutes, one request each. Remaining API quota is shown in the top bar, and polling pauses if it runs low.
 
 ## Other repositories
 

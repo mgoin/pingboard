@@ -233,12 +233,17 @@ export class BoardStore {
         const groupIds = new Map(imported.board.groups.map((group) => {
           const existing = state.board.groups.find((item) => item.name.toLowerCase() === group.name.toLowerCase());
           const target = existing || ensureGroup(state.board, group.name, false);
+          if (group.query && !target.query) Object.assign(target, { query: group.query, dismissed: group.dismissed });
           return [group.id, target.id];
         }));
         const pinned = new Set(state.board.pins.map((pin) => pin.key));
         for (const pin of imported.board.pins) {
           if (pinned.has(pin.key)) continue;
-          state.board.pins.push({ ...pin, group: groupIds.get(pin.group) });
+          state.board.pins.push({
+            ...pin,
+            group: groupIds.get(pin.group),
+            ...(pin.via ? { via: groupIds.get(pin.via) } : {})
+          });
           state.board.groups.find((group) => group.id === groupIds.get(pin.group)).collapsed = false;
           pinned.add(pin.key);
         }

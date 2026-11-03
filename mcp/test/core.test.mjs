@@ -34,12 +34,12 @@ test("cleared built-in profile settings survive normalization and reload", () =>
 test("saved browser view preferences survive shared normalization and JSON roundtrips", () => {
   for (const view of [
     { sort: "manual", filter: "all", owner: "all" },
-    { sort: "updated", filter: "failing", owner: "mine" },
+    { sort: "updated", filter: "failing", owner: "mine", unpinClosed: true },
     { sort: "added", filter: "running", owner: "others" },
     { sort: "number", filter: "green", owner: "all" },
     { sort: "status", filter: "noci", owner: "mine" },
     { sort: "manual", filter: "closed", owner: "others" },
-    { sort: "updated", filter: "requested", owner: "mine" }
+    { sort: "updated", filter: "requested", owner: "mine", unpinClosed: false }
   ]) {
     const prefs = Core.normalizePrefs(view);
     for (const [key, value] of Object.entries(view)) assert.equal(prefs[key], value, key);
@@ -53,9 +53,43 @@ test("missing or malformed browser view preferences use the existing defaults", 
     { sort: [], filter: {}, owner: 1 },
     { sort: null, filter: null, owner: null }
   ]) {
-    const { sort, filter, owner } = Core.normalizePrefs(raw);
-    assert.deepEqual({ sort, filter, owner }, { sort: "manual", filter: "all", owner: "all" });
+    const { sort, filter, owner, unpinClosed } = Core.normalizePrefs(raw);
+    assert.deepEqual({ sort, filter, owner, unpinClosed }, { sort: "manual", filter: "all", owner: "all", unpinClosed: false });
   }
+});
+
+test("search groups retain their query, dismissals and moved search pins on reload", () => {
+  const board = {
+    groups: [
+      { id: "search", name: "Review requests", collapsed: true, query: `repo:${repo} review-requested:@me`, dismissed: [`${repo}#9`] },
+      { id: "manual", name: "Tracking", collapsed: false }
+    ],
+    pins: [
+      { key: `${repo}#1`, repo, number: 1, group: "search", addedAt: 123, via: "search" },
+      { key: `${repo}#2`, repo, number: 2, group: "manual", addedAt: 124, via: "search" }
+    ]
+  };
+  assert.deepEqual(Core.cleanBoard(board), board);
+  assert.deepEqual(Core.cleanBoard(JSON.parse(JSON.stringify(board))), board);
+});
+
+test("search metadata normalizes queries, bounds valid dismissals and drops unknown origins", () => {
+  const dismissed = Array.from({ length: 201 }, (_, i) => `${repo}#${i + 1}`);
+  const board = Core.cleanBoard({
+    groups: [
+      { id: "search", name: "Reviews", query: "  review-requested:@me  ", dismissed: [...dismissed, "invalid", null] },
+      { id: "blank", name: "Blank", query: " ", dismissed },
+      { id: "malformed", name: "Malformed", query: 123, dismissed }
+    ],
+    pins: [{ repo, number: 1, group: "search", addedAt: 123, via: "missing" }]
+  });
+  assert.equal(board.groups[0].query, "review-requested:@me");
+  assert.deepEqual(board.groups[0].dismissed, dismissed.slice(1));
+  for (const group of board.groups.slice(1)) {
+    assert.equal(Object.hasOwn(group, "query"), false);
+    assert.equal(Object.hasOwn(group, "dismissed"), false);
+  }
+  assert.equal(Object.hasOwn(board.pins[0], "via"), false);
 });
 
 test("queued retries and timestamp ties cannot look passed in either API order", () => {

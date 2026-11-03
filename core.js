@@ -8,6 +8,7 @@
 
 const DEFAULT_REPO = "vllm-project/vllm";
 const BOARD_WIDTH = 520;
+const DISMISSED_MAX = 200;
 
 /* Per-repo workflow knowledge. Anything not listed gets GENERIC_PROFILE. */
 const REPO_PROFILES = {
@@ -89,7 +90,8 @@ function normalizePrefs(raw) {
     repoProfiles: normalizeRepoProfiles(prefs.repoProfiles),
     sort: ["manual", "updated", "added", "number", "status"].includes(prefs.sort) ? prefs.sort : "manual",
     filter: ["all", "failing", "running", "green", "noci", "closed", "requested"].includes(prefs.filter) ? prefs.filter : "all",
-    owner: ["all", "mine", "others"].includes(prefs.owner) ? prefs.owner : "all"
+    owner: ["all", "mine", "others"].includes(prefs.owner) ? prefs.owner : "all",
+    unpinClosed: Boolean(prefs.unpinClosed)
   };
 }
 
@@ -98,7 +100,15 @@ function cleanBoard(raw) {
   if (!Array.isArray(raw?.groups) || !Array.isArray(raw.pins)) return null;
   const groups = raw.groups
     .filter((group) => group && typeof group.id === "string" && typeof group.name === "string" && group.name.trim())
-    .map((group) => ({ id: group.id, name: group.name.trim(), collapsed: Boolean(group.collapsed) }));
+    .map((group) => ({
+      id: group.id,
+      name: group.name.trim(),
+      collapsed: Boolean(group.collapsed),
+      ...(typeof group.query === "string" && group.query.trim() ? {
+        query: group.query.trim(),
+        dismissed: (Array.isArray(group.dismissed) ? group.dismissed : []).filter((key) => /^[\w.-]+\/[\w.-]+#\d+$/.test(key)).slice(-DISMISSED_MAX)
+      } : {})
+    }));
   if (!groups.length) return null;
   const seen = new Set();
   const pins = [];
@@ -113,7 +123,8 @@ function cleanBoard(raw) {
       number: pin.number,
       group: groups.some((group) => group.id === pin.group) ? pin.group : groups[0].id,
       addedAt: Number(pin.addedAt) || Date.now(),
-      ...(typeof pin.seen === "string" ? { seen: pin.seen } : {})
+      ...(typeof pin.seen === "string" ? { seen: pin.seen } : {}),
+      ...(groups.some((group) => group.id === pin.via) ? { via: pin.via } : {})
     });
   }
   return { groups, pins };
